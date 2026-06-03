@@ -1,0 +1,31 @@
+.mvu-initvar-switcher-settings .inline-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.mvu-initvar-switcher-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.mvu-initvar-switcher-status {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    padding: 0.5rem;
+    white-space: pre-wrap;
+}
+
+.mvu-initvar-switcher-status[data-type='ok'] {
+    border-color: #4caf50;
+}
+
+.mvu-initvar-switcher-status[data-type='warn'] {
+    border-color: #ff9800;
+}
+
+.mvu-initvar-switcher-status[data-type='error'] {
+    border-color: #f44336;
+}

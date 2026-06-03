@@ -1,0 +1,15 @@
+{
+  "name": "st-mvu-zod-switcher",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-tavern-helper.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/tavern-helper-core.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  }
+}

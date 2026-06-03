@@ -35,6 +35,8 @@ SillyTavern/public/scripts/extensions/third-party/st-mvu-zod-switcher
 
 Then enable `MVU InitVar Switcher` in SillyTavern's extension manager.
 
+After it loads, open the magic wand menu and choose `MVU InitVar Switcher` to open the same settings panel in a dialog. The panel is still also available in SillyTavern's extension settings area.
+
 ## Tavern Helper Character Script Version
 
 Build the release files:

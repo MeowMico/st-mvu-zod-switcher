@@ -8,6 +8,8 @@ const INLINE_PRESET_PATTERNS = [
 ];
 const EXTENSIBLE_MARKER = '$__META_EXTENSIBLE__$';
 const registeredEventTypes = new Set();
+let wandMenuInterval = null;
+let wandMenuObserver = null;
 let didInit = false;
 
 const defaultSettings = Object.freeze({
@@ -763,15 +765,22 @@ function updateStatus(message, type = 'info') {
     status.dataset.type = type;
 }
 
-function renderSettings() {
-    if (document.getElementById(`${MODULE_NAME}_settings`)) {
-        return;
+function getDefaultSettingsTarget() {
+    return document.querySelector('#extensions_settings2') ?? document.querySelector('#extensions_settings') ?? document.body;
+}
+
+function renderSettings(target = getDefaultSettingsTarget()) {
+    const existing = document.getElementById(`${MODULE_NAME}_settings`);
+    if (existing) {
+        if (existing.parentElement !== target) {
+            target.append(existing);
+        }
+        return existing;
     }
 
-    const settingsTarget = document.querySelector('#extensions_settings2');
-    if (!settingsTarget) {
+    if (!target) {
         console.warn(`[${DISPLAY_NAME}] Extension settings panel was not found.`);
-        return;
+        return null;
     }
 
     const settings = getSettings();
@@ -822,7 +831,7 @@ function renderSettings() {
         </div>
     `;
 
-    settingsTarget.append(container);
+    target.append(container);
 
     const enabled = document.getElementById(`${MODULE_NAME}_enabled`);
     const auto = document.getElementById(`${MODULE_NAME}_auto`);
@@ -872,6 +881,127 @@ function renderSettings() {
             updateStatus(`Manual apply failed: ${error.message}`, 'error');
         }
     });
+
+    return container;
+}
+
+function closeSettingsDialog() {
+    const modal = document.getElementById(`${MODULE_NAME}_modal`);
+    if (modal) {
+        modal.hidden = true;
+    }
+    renderSettings();
+}
+
+function openSettingsDialog() {
+    let modal = document.getElementById(`${MODULE_NAME}_modal`);
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = `${MODULE_NAME}_modal`;
+        modal.className = 'mvu-initvar-switcher-modal';
+        modal.innerHTML = `
+            <div class="mvu-initvar-switcher-dialog" role="dialog" aria-modal="true" aria-labelledby="${MODULE_NAME}_modal_title">
+                <div class="mvu-initvar-switcher-dialog-header">
+                    <h3 id="${MODULE_NAME}_modal_title">MVU InitVar Switcher</h3>
+                    <button id="${MODULE_NAME}_modal_close" class="menu_button" type="button" aria-label="Close MVU InitVar Switcher">Close</button>
+                </div>
+                <div id="${MODULE_NAME}_modal_body" class="mvu-initvar-switcher-dialog-body"></div>
+            </div>
+        `;
+
+        document.body.append(modal);
+        modal.addEventListener('click', event => {
+            if (event.target === modal) {
+                closeSettingsDialog();
+            }
+        });
+        document.getElementById(`${MODULE_NAME}_modal_close`)?.addEventListener('click', closeSettingsDialog);
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && !modal?.hidden) {
+                closeSettingsDialog();
+            }
+        });
+    }
+
+    modal.hidden = false;
+    const body = document.getElementById(`${MODULE_NAME}_modal_body`);
+    if (body) {
+        renderSettings(body);
+    }
+    document.getElementById(`${MODULE_NAME}_modal_close`)?.focus();
+}
+
+function getWandMenuContainer() {
+    const menu = document.getElementById('extensionsMenu');
+    if (!menu) {
+        return null;
+    }
+
+    let container = document.getElementById(`${MODULE_NAME}_wand_container`);
+    if (!container) {
+        container = document.createElement('div');
+        container.id = `${MODULE_NAME}_wand_container`;
+        container.className = 'extension_container';
+        menu.prepend(container);
+    } else if (container.parentElement !== menu) {
+        menu.prepend(container);
+    }
+
+    return container;
+}
+
+function buildWandMenuItem() {
+    const item = document.createElement('div');
+    item.id = `${MODULE_NAME}_wand_item`;
+    item.className = 'list-group-item flex-container flexGap5 interactable';
+    item.setAttribute('role', 'button');
+    item.setAttribute('tabindex', '0');
+    item.setAttribute('title', 'Open MVU InitVar Switcher');
+    item.innerHTML = `
+        <div class="fa-solid fa-wand-magic-sparkles extensionsMenuExtensionButton" title="Open MVU InitVar Switcher"></div>
+        <span>MVU InitVar Switcher</span>
+    `;
+
+    const activate = () => openSettingsDialog();
+    item.addEventListener('click', activate);
+    item.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            activate();
+        }
+    });
+
+    return item;
+}
+
+function registerWandMenu() {
+    const container = getWandMenuContainer();
+    if (!container) {
+        return;
+    }
+
+    if (!document.getElementById(`${MODULE_NAME}_wand_item`)) {
+        container.prepend(buildWandMenuItem());
+    }
+
+    const button = document.getElementById('extensionsMenuButton');
+    if (button) {
+        button.style.display = 'flex';
+    }
+}
+
+function keepWandMenuRegistered() {
+    registerWandMenu();
+
+    if (!wandMenuInterval) {
+        wandMenuInterval = setInterval(registerWandMenu, 1500);
+    }
+
+    const menu = document.getElementById('extensionsMenu');
+    if (menu && !wandMenuObserver) {
+        wandMenuObserver = new MutationObserver(() => registerWandMenu());
+        wandMenuObserver.observe(menu, { childList: true, subtree: false });
+    }
 }
 
 function registerEvents() {
@@ -900,6 +1030,7 @@ function init() {
     didInit = true;
     getSettings();
     renderSettings();
+    keepWandMenuRegistered();
     registerEvents();
     setTimeout(autoApplyCurrentPreset, 500);
 }
@@ -917,5 +1048,7 @@ if (context.eventSource?.on && eventTypes.APP_READY) {
 globalThis.MvuInitVarSwitcher = {
     applyCurrentPreset,
     scanCurrentPreset,
+    openSettingsDialog,
+    registerWandMenu,
     resolveCurrentPreset,
 };

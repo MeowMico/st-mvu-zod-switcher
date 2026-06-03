@@ -76,6 +76,12 @@ Frontend mappings are saved in the Tavern Helper script variables when that API 
 
 The same panel is also available from the magic wand menu: open the wand menu and choose `MVU InitVar Switcher`.
 
+If the magic wand menu is rebuilt by another extension and the entry is not visible yet, reload the page after updating the import URL. As a fallback, run this in the browser console:
+
+```js
+MvuInitVarSwitcherTH.openSettingsDialog()
+```
+
 ## Basic Author Workflow
 
 Create one world info entry for each opening:

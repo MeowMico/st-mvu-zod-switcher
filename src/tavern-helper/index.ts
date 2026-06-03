@@ -97,6 +97,8 @@ const BUTTONS = [
 
 let didInit = false;
 let lastAutoApplyTimer: ReturnType<typeof setTimeout> | undefined;
+let wandMenuInterval: ReturnType<typeof setInterval> | undefined;
+let wandMenuObserver: MutationObserver | undefined;
 
 function getContext(): Record<string, any> {
   return root.SillyTavern?.getContext?.() ?? {};
@@ -679,26 +681,35 @@ function openSettingsDialog(): void {
   document.getElementById(`${MODULE_NAME}_modal_close`)?.focus();
 }
 
-function registerWandMenu(): void {
-  if (document.getElementById(`${MODULE_NAME}_wand_item`)) {
-    return;
-  }
-
+function getWandMenuContainer(): HTMLElement | null {
   const menu = document.getElementById('extensionsMenu');
   if (!menu) {
-    setTimeout(registerWandMenu, 1000);
-    return;
+    return null;
   }
 
+  let container = document.getElementById(`${MODULE_NAME}_wand_container`) as HTMLElement | null;
+  if (!container) {
+    container = document.createElement('div');
+    container.id = `${MODULE_NAME}_wand_container`;
+    container.className = 'extension_container';
+    menu.prepend(container);
+  } else if (container.parentElement !== menu) {
+    menu.prepend(container);
+  }
+
+  return container;
+}
+
+function buildWandMenuItem(): HTMLElement {
   const item = document.createElement('div');
   item.id = `${MODULE_NAME}_wand_item`;
-  item.className = 'list-group-item flex-container flexGap5';
-  item.style.order = '99';
+  item.className = 'list-group-item flex-container flexGap5 interactable';
   item.setAttribute('role', 'button');
   item.setAttribute('tabindex', '0');
-  item.title = 'Open MVU InitVar Switcher';
+  item.setAttribute('title', 'Open MVU InitVar Switcher');
+  item.setAttribute('data-i18n', '[title]Open MVU InitVar Switcher');
   item.innerHTML = `
-    <div class="fa-solid fa-wand-magic-sparkles extensionsMenuExtensionButton"></div>
+    <div class="fa-solid fa-wand-magic-sparkles extensionsMenuExtensionButton" title="Open MVU InitVar Switcher"></div>
     <span>MVU InitVar Switcher</span>
   `;
 
@@ -710,7 +721,38 @@ function registerWandMenu(): void {
       activate();
     }
   });
-  menu.append(item);
+
+  return item;
+}
+
+function registerWandMenu(): void {
+  const container = getWandMenuContainer();
+  if (!container) {
+    return;
+  }
+
+  if (!document.getElementById(`${MODULE_NAME}_wand_item`)) {
+    container.prepend(buildWandMenuItem());
+  }
+
+  const button = document.getElementById('extensionsMenuButton') as HTMLElement | null;
+  if (button) {
+    button.style.display = 'flex';
+  }
+}
+
+function keepWandMenuRegistered(): void {
+  registerWandMenu();
+
+  if (!wandMenuInterval) {
+    wandMenuInterval = setInterval(registerWandMenu, 1500);
+  }
+
+  const menu = document.getElementById('extensionsMenu');
+  if (menu && !wandMenuObserver) {
+    wandMenuObserver = new MutationObserver(() => registerWandMenu());
+    wandMenuObserver.observe(menu, { childList: true, subtree: false });
+  }
 }
 
 function logError(message: string, error: unknown): void {
@@ -1190,7 +1232,7 @@ function init(): void {
   hydrateSettingsFromScriptVariables();
   getSettings();
   renderSettingsPanel();
-  registerWandMenu();
+  keepWandMenuRegistered();
   renderScriptInfo();
   registerButtons();
   registerEvents();
@@ -1207,5 +1249,7 @@ root.MvuInitVarSwitcherTH = {
   applyCurrentPreset,
   scanCurrentPreset,
   clearAppliedRecords,
+  openSettingsDialog,
+  registerWandMenu,
   resolveCurrentPreset,
 };

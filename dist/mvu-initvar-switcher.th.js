@@ -293,6 +293,8 @@
   ];
   var didInit = false;
   var lastAutoApplyTimer;
+  var wandMenuInterval;
+  var wandMenuObserver;
   function getContext() {
     return root.SillyTavern?.getContext?.() ?? {};
   }
@@ -817,24 +819,32 @@ ${text}`, "warn");
     }
     document.getElementById(`${MODULE_NAME}_modal_close`)?.focus();
   }
-  function registerWandMenu() {
-    if (document.getElementById(`${MODULE_NAME}_wand_item`)) {
-      return;
-    }
+  function getWandMenuContainer() {
     const menu = document.getElementById("extensionsMenu");
     if (!menu) {
-      setTimeout(registerWandMenu, 1e3);
-      return;
+      return null;
     }
+    let container = document.getElementById(`${MODULE_NAME}_wand_container`);
+    if (!container) {
+      container = document.createElement("div");
+      container.id = `${MODULE_NAME}_wand_container`;
+      container.className = "extension_container";
+      menu.prepend(container);
+    } else if (container.parentElement !== menu) {
+      menu.prepend(container);
+    }
+    return container;
+  }
+  function buildWandMenuItem() {
     const item = document.createElement("div");
     item.id = `${MODULE_NAME}_wand_item`;
-    item.className = "list-group-item flex-container flexGap5";
-    item.style.order = "99";
+    item.className = "list-group-item flex-container flexGap5 interactable";
     item.setAttribute("role", "button");
     item.setAttribute("tabindex", "0");
-    item.title = "Open MVU InitVar Switcher";
+    item.setAttribute("title", "Open MVU InitVar Switcher");
+    item.setAttribute("data-i18n", "[title]Open MVU InitVar Switcher");
     item.innerHTML = `
-    <div class="fa-solid fa-wand-magic-sparkles extensionsMenuExtensionButton"></div>
+    <div class="fa-solid fa-wand-magic-sparkles extensionsMenuExtensionButton" title="Open MVU InitVar Switcher"></div>
     <span>MVU InitVar Switcher</span>
   `;
     const activate = () => openSettingsDialog();
@@ -845,7 +855,31 @@ ${text}`, "warn");
         activate();
       }
     });
-    menu.append(item);
+    return item;
+  }
+  function registerWandMenu() {
+    const container = getWandMenuContainer();
+    if (!container) {
+      return;
+    }
+    if (!document.getElementById(`${MODULE_NAME}_wand_item`)) {
+      container.prepend(buildWandMenuItem());
+    }
+    const button = document.getElementById("extensionsMenuButton");
+    if (button) {
+      button.style.display = "flex";
+    }
+  }
+  function keepWandMenuRegistered() {
+    registerWandMenu();
+    if (!wandMenuInterval) {
+      wandMenuInterval = setInterval(registerWandMenu, 1500);
+    }
+    const menu = document.getElementById("extensionsMenu");
+    if (menu && !wandMenuObserver) {
+      wandMenuObserver = new MutationObserver(() => registerWandMenu());
+      wandMenuObserver.observe(menu, { childList: true, subtree: false });
+    }
   }
   function logError(message, error) {
     console.error(`[${DISPLAY_NAME}] ${message}`, error);
@@ -1251,7 +1285,7 @@ ${text}`, "warn");
     hydrateSettingsFromScriptVariables();
     getSettings();
     renderSettingsPanel();
-    registerWandMenu();
+    keepWandMenuRegistered();
     renderScriptInfo();
     registerButtons();
     registerEvents();
@@ -1266,6 +1300,8 @@ ${text}`, "warn");
     applyCurrentPreset,
     scanCurrentPreset,
     clearAppliedRecords,
+    openSettingsDialog,
+    registerWandMenu,
     resolveCurrentPreset
   };
 })();

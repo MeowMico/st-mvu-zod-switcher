@@ -16,6 +16,7 @@ The Tavern Helper version is the recommended publishing path for card authors wh
 ## What It Does
 
 - Reads the current opening swipe index.
+- Scans the current character's first message and alternate greetings when SillyTavern exposes them in the browser context.
 - Finds a matching world info entry named `[MVU_INIT_PRESET:N]`.
 - Parses that entry as JSON or YAML.
 - Writes the result into MVU data for message 0's current swipe.
@@ -36,6 +37,35 @@ SillyTavern/public/scripts/extensions/third-party/st-mvu-zod-switcher
 Then enable `MVU InitVar Switcher` in SillyTavern's extension manager.
 
 After it loads, open the magic wand menu and choose `MVU InitVar Switcher` to open the same settings panel in a dialog. The panel is still also available in SillyTavern's extension settings area.
+
+### GitHub Extension Install
+
+In SillyTavern's third-party extension installer, use:
+
+```text
+https://github.com/MeowMico/st-mvu-zod-switcher
+```
+
+For this workbench version, install tag:
+
+```text
+v0.2.5
+```
+
+After installation, refresh SillyTavern and open the magic wand menu. Choose `MVU InitVar Switcher`.
+
+### Extension Opening Workbench
+
+The extension dialog now includes an `Opening Workbench` section for card authors:
+
+- `Refresh Openings/Presets` scans the current card openings and the currently discoverable character/chat/global worldbooks.
+- Each `Opening #N` row shows a preview of that opening and a labeled preset dropdown.
+- Leaving a row blank uses the normal fallback: inline marker, then `[MVU_INIT_MAP]`, then `[MVU_INIT_PRESET:N]`.
+- Choosing a preset in the dropdown saves a per-current-character workbench map in extension settings. That map overrides `[MVU_INIT_MAP]` for that card while you are testing.
+- `Copy [MVU_INIT_MAP] JSON` copies the saved workbench map so authors can paste it into a disabled `[MVU_INIT_MAP]` worldbook entry for publishing.
+- `Clear Workbench Map` removes the saved frontend bindings for the current character only.
+
+This workbench does not read SillyTavern files from disk. It only uses the current browser-side SillyTavern context and loaded worldbook APIs.
 
 ## Tavern Helper Character Script Version
 
@@ -225,6 +255,7 @@ The extension settings panel provides:
 - Allow auto overwrite after chat has started.
 - Apply mode: `replace` or `merge`.
 - Preset search scope.
+- Opening Workbench: scan current openings, bind each opening to discovered initvar presets, copy a `[MVU_INIT_MAP]` JSON body, and clear saved per-card bindings.
 - Scan Current Preset.
 - Apply Current Preset.
 

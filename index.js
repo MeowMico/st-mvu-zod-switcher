@@ -19,6 +19,7 @@ const defaultSettings = Object.freeze({
     presetSource: 'active',
     allowAfterChatStarted: false,
     showToasts: true,
+    openingPresetMaps: {},
 });
 
 function getContext() {
@@ -34,7 +35,7 @@ function getSettings() {
 
     for (const [key, value] of Object.entries(defaultSettings)) {
         if (!Object.hasOwn(extensionSettings[MODULE_NAME], key)) {
-            extensionSettings[MODULE_NAME][key] = value;
+            extensionSettings[MODULE_NAME][key] = isPlainObject(value) || Array.isArray(value) ? deepClone(value) : value;
         }
     }
 
@@ -54,6 +55,103 @@ function showToast(type, message) {
     if (toastrApi?.[type]) {
         toastrApi[type](message, DISPLAY_NAME);
     }
+}
+
+function getCurrentCharacter() {
+    const context = getContext();
+    return Array.isArray(context.characters) ? context.characters[context.characterId] ?? null : null;
+}
+
+function getCurrentCharacterKey() {
+    const context = getContext();
+    const character = getCurrentCharacter();
+    const candidates = [
+        character?.avatar ? `avatar:${character.avatar}` : null,
+        character?.data?.avatar ? `avatar:${character.data.avatar}` : null,
+        character?.name ? `name:${character.name}` : null,
+        character?.data?.name ? `name:${character.data.name}` : null,
+        context.characterId !== undefined && context.characterId !== null ? `id:${context.characterId}` : null,
+    ];
+
+    return candidates.find(Boolean) ?? 'current-character';
+}
+
+function getOpeningPresetMaps() {
+    const settings = getSettings();
+    if (!isPlainObject(settings.openingPresetMaps)) {
+        settings.openingPresetMaps = {};
+    }
+
+    return settings.openingPresetMaps;
+}
+
+function getStoredOpeningPresetMap() {
+    const maps = getOpeningPresetMaps();
+    const characterKey = getCurrentCharacterKey();
+    return isPlainObject(maps[characterKey]) ? maps[characterKey] : {};
+}
+
+function getMapValue(mapData, swipeIndex) {
+    if (!isPlainObject(mapData)) {
+        return null;
+    }
+
+    const mapped = mapData[String(swipeIndex)] ?? mapData[swipeIndex];
+    if (typeof mapped === 'string' || typeof mapped === 'number') {
+        const value = String(mapped).trim();
+        return value || null;
+    }
+
+    return null;
+}
+
+function mergePresetMaps(worldMapData, storedMap = getStoredOpeningPresetMap()) {
+    const result = {};
+    if (isPlainObject(worldMapData)) {
+        for (const [key, value] of Object.entries(worldMapData)) {
+            const normalized = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+            if (normalized) {
+                result[key] = normalized;
+            }
+        }
+    }
+
+    if (isPlainObject(storedMap)) {
+        for (const [key, value] of Object.entries(storedMap)) {
+            const normalized = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+            if (normalized) {
+                result[key] = normalized;
+            }
+        }
+    }
+
+    return Object.keys(result).length > 0 ? result : null;
+}
+
+function setStoredOpeningPreset(swipeIndex, presetId) {
+    const maps = getOpeningPresetMaps();
+    const characterKey = getCurrentCharacterKey();
+    const key = String(swipeIndex);
+    const normalizedPresetId = String(presetId ?? '').trim();
+    const characterMap = isPlainObject(maps[characterKey]) ? maps[characterKey] : (maps[characterKey] = {});
+
+    if (normalizedPresetId) {
+        characterMap[key] = normalizedPresetId;
+    } else {
+        delete characterMap[key];
+    }
+
+    if (Object.keys(characterMap).length === 0) {
+        delete maps[characterKey];
+    }
+
+    saveSettings();
+}
+
+function clearStoredOpeningPresetMap() {
+    const maps = getOpeningPresetMaps();
+    delete maps[getCurrentCharacterKey()];
+    saveSettings();
 }
 
 function logError(message, error) {
@@ -251,16 +349,122 @@ function getCurrentOpeningText() {
     return String(opening?.mes ?? '');
 }
 
-function getCurrentPresetIdFromOpening() {
-    const text = getCurrentOpeningText();
+function normalizeOpeningText(value) {
+    return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function getOpeningPreview(value, maxLength = 120) {
+    const text = normalizeOpeningText(value);
+    if (!text) {
+        return '(empty opening)';
+    }
+
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+}
+
+function getStringValue(...values) {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) {
+            return value;
+        }
+    }
+
+    return '';
+}
+
+function getArrayValue(...values) {
+    for (const value of values) {
+        if (Array.isArray(value)) {
+            return value;
+        }
+    }
+
+    return [];
+}
+
+function getChatOpeningRows() {
+    const opening = getCurrentOpeningMessage();
+    if (Array.isArray(opening?.swipes) && opening.swipes.length > 0) {
+        return opening.swipes.map((text, index) => ({
+            index,
+            text: String(text ?? ''),
+            source: 'current chat swipes',
+        }));
+    }
+
+    if (opening?.mes) {
+        return [{
+            index: getCurrentSwipeIndex(),
+            text: String(opening.mes),
+            source: 'current chat opening',
+        }];
+    }
+
+    return [];
+}
+
+function getCardOpeningRows() {
+    const character = getCurrentCharacter();
+    if (!character) {
+        return [];
+    }
+
+    const firstMessage = getStringValue(
+        character.first_mes,
+        character.mes,
+        character.data?.first_mes,
+        character.data?.mes
+    );
+    const alternateGreetings = getArrayValue(
+        character.alternate_greetings,
+        character.alternateGreetings,
+        character.data?.alternate_greetings,
+        character.data?.alternateGreetings,
+        character.data?.extensions?.alternate_greetings,
+        character.data?.extensions?.alternateGreetings
+    );
+    const rows = [];
+
+    if (firstMessage) {
+        rows.push({
+            index: 0,
+            text: firstMessage,
+            source: 'current character card',
+        });
+    }
+
+    alternateGreetings.forEach((text, index) => {
+        if (typeof text === 'string') {
+            rows.push({
+                index: index + 1,
+                text,
+                source: 'current character card',
+            });
+        }
+    });
+
+    return rows;
+}
+
+function getOpeningRows() {
+    const cardRows = getCardOpeningRows();
+    const chatRows = getChatOpeningRows();
+    return cardRows.length >= chatRows.length ? cardRows : chatRows;
+}
+
+function getPresetIdFromText(text) {
     for (const pattern of INLINE_PRESET_PATTERNS) {
-        const match = text.match(pattern);
+        const match = String(text ?? '').match(pattern);
         if (match?.[1]?.trim()) {
             return match[1].trim();
         }
     }
 
     return null;
+}
+
+function getCurrentPresetIdFromOpening() {
+    return getPresetIdFromText(getCurrentOpeningText());
 }
 
 function getCurrentPresetId(mapData = null) {
@@ -271,9 +475,9 @@ function getCurrentPresetId(mapData = null) {
 
     const swipeIndex = getCurrentSwipeIndex();
     if (mapData) {
-        const mapped = mapData[String(swipeIndex)] ?? mapData[swipeIndex];
-        if (typeof mapped === 'string' || typeof mapped === 'number') {
-            return String(mapped);
+        const mapped = getMapValue(mapData, swipeIndex);
+        if (mapped) {
+            return mapped;
         }
     }
 
@@ -619,18 +823,29 @@ function parseFirstMap(maps) {
 
 async function resolveCurrentPreset() {
     const { presets, maps, worldNames } = await loadPresetEntries();
-    const mapData = parseFirstMap(maps);
+    const worldMapData = parseFirstMap(maps);
+    const storedMap = getStoredOpeningPresetMap();
+    const mapData = mergePresetMaps(worldMapData, storedMap);
+    const swipeIndex = getCurrentSwipeIndex();
     const presetId = getCurrentPresetId(mapData);
     const preset = presets.find(entry => entry.id === presetId);
+    const inlineId = getCurrentPresetIdFromOpening();
+    const storedId = getMapValue(storedMap, swipeIndex);
+    const worldMapId = getMapValue(worldMapData, swipeIndex);
+    const mapSource = inlineId ? 'inline tag' : storedId ? 'workbench map' : worldMapId ? 'worldbook map' : 'swipe index';
 
     return {
         presetId,
         preset,
         presets,
         maps,
+        worldMapData,
+        storedMap,
+        mapData,
+        mapSource,
         worldNames,
-        swipeIndex: getCurrentSwipeIndex(),
-        inlineId: getCurrentPresetIdFromOpening(),
+        swipeIndex,
+        inlineId,
     };
 }
 
@@ -738,9 +953,8 @@ async function scanCurrentPreset() {
     try {
         const resolved = await resolveCurrentPreset();
         if (resolved.preset) {
-            const source = resolved.inlineId ? 'inline tag' : resolved.maps.length ? 'map/index' : 'swipe index';
             updateStatus(
-                `Opening #${resolved.swipeIndex} resolves to preset '${resolved.presetId}' from '${resolved.preset.worldName}' (${source}).`,
+                `Opening #${resolved.swipeIndex} resolves to preset '${resolved.presetId}' from '${resolved.preset.worldName}' (${resolved.mapSource}).`,
                 'ok'
             );
         } else {
@@ -765,6 +979,273 @@ function updateStatus(message, type = 'info') {
     status.dataset.type = type;
 }
 
+let mappingRenderToken = 0;
+
+function getPresetOptions(presets) {
+    const groups = new Map();
+    for (const preset of presets) {
+        const id = String(preset.id ?? '').trim();
+        if (!id) {
+            continue;
+        }
+
+        if (!groups.has(id)) {
+            groups.set(id, {
+                id,
+                count: 0,
+                worldNames: new Set(),
+            });
+        }
+
+        const group = groups.get(id);
+        group.count += 1;
+        if (preset.worldName) {
+            group.worldNames.add(preset.worldName);
+        }
+    }
+
+    return [...groups.values()].sort((left, right) => left.id.localeCompare(right.id, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+    }));
+}
+
+function getPresetOptionLabel(option) {
+    const worldNames = [...option.worldNames].join(', ') || 'unknown worldbook';
+    const duplicateText = option.count > 1 ? `, ${option.count} entries` : '';
+    return `${option.id} (${worldNames}${duplicateText})`;
+}
+
+function getSortedMapEntries(mapData) {
+    if (!isPlainObject(mapData)) {
+        return [];
+    }
+
+    return Object.entries(mapData)
+        .map(([key, value]) => [String(key), String(value ?? '').trim()])
+        .filter(([, value]) => value)
+        .sort(([leftKey], [rightKey]) => {
+            const leftNumber = Number(leftKey);
+            const rightNumber = Number(rightKey);
+            if (Number.isSafeInteger(leftNumber) && Number.isSafeInteger(rightNumber)) {
+                return leftNumber - rightNumber;
+            }
+
+            return leftKey.localeCompare(rightKey, undefined, { numeric: true });
+        });
+}
+
+function formatMapEntries(entries, limit = 8) {
+    if (entries.length === 0) {
+        return 'none';
+    }
+
+    const visibleEntries = entries.slice(0, limit).map(([key, value]) => `#${key} -> ${value}`);
+    return entries.length > limit ? `${visibleEntries.join(', ')}, ...` : visibleEntries.join(', ');
+}
+
+function getOpeningPresetResolutionForRow(row, worldMapData, storedMap) {
+    const inlineId = getPresetIdFromText(row.text);
+    if (inlineId) {
+        return { presetId: inlineId, source: 'inline marker' };
+    }
+
+    const storedId = getMapValue(storedMap, row.index);
+    if (storedId) {
+        return { presetId: storedId, source: 'workbench map' };
+    }
+
+    const worldMapId = getMapValue(worldMapData, row.index);
+    if (worldMapId) {
+        return { presetId: worldMapId, source: 'worldbook map' };
+    }
+
+    return { presetId: String(row.index), source: 'swipe index' };
+}
+
+function renderMappingSummary({ presets, maps, worldNames, rows, worldMapData, storedMap }) {
+    const summary = document.getElementById(`${MODULE_NAME}_mapper_summary`);
+    if (!summary) {
+        return;
+    }
+
+    const presetIds = new Set(presets.map(preset => String(preset.id)));
+    const missingIds = new Set();
+    for (const row of rows) {
+        const resolution = getOpeningPresetResolutionForRow(row, worldMapData, storedMap);
+        if (!presetIds.has(resolution.presetId)) {
+            missingIds.add(resolution.presetId);
+        }
+    }
+
+    const currentResolution = getOpeningPresetResolutionForRow({
+        index: getCurrentSwipeIndex(),
+        text: getCurrentOpeningText(),
+    }, worldMapData, storedMap);
+    const storedEntries = getSortedMapEntries(storedMap);
+    const worldMapEntries = getSortedMapEntries(worldMapData);
+    const lines = [
+        `${rows.length} opening(s), ${presets.length} preset entry/entries, ${worldNames.length} loaded worldbook(s).`,
+        `Current opening #${getCurrentSwipeIndex()} -> ${currentResolution.presetId} (${currentResolution.source}).`,
+        `Workbench map: ${formatMapEntries(storedEntries)}.`,
+    ];
+
+    if (worldMapEntries.length > 0) {
+        lines.push(`[MVU_INIT_MAP]: ${formatMapEntries(worldMapEntries)}.`);
+    }
+    if (maps.length > 1) {
+        lines.push(`${maps.length} [MVU_INIT_MAP] entries were found; the first valid one is used before workbench overrides.`);
+    }
+    if (missingIds.size > 0) {
+        lines.push(`Missing preset id(s): ${[...missingIds].join(', ')}.`);
+    }
+
+    summary.textContent = lines.join('\n');
+    summary.dataset.type = missingIds.size > 0 || presets.length === 0 ? 'warn' : 'ok';
+}
+
+async function copyOpeningPresetMap() {
+    const storedMap = getStoredOpeningPresetMap();
+    const entries = getSortedMapEntries(storedMap);
+    if (entries.length === 0) {
+        updateStatus('No workbench mappings to copy yet.', 'warn');
+        return;
+    }
+
+    const text = JSON.stringify(Object.fromEntries(entries), null, 2);
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            updateStatus('Copied workbench map JSON. Put it in a disabled [MVU_INIT_MAP] worldbook entry if you want to ship it that way.', 'ok');
+            return;
+        }
+    } catch (error) {
+        console.warn(`[${DISPLAY_NAME}] Clipboard copy failed`, error);
+    }
+
+    globalThis.prompt?.('Copy this [MVU_INIT_MAP] JSON:', text);
+    updateStatus('Clipboard API was unavailable. A copy dialog was opened instead.', 'warn');
+}
+
+async function renderMappingEditor() {
+    const mapper = document.getElementById(`${MODULE_NAME}_mapper`);
+    if (!mapper) {
+        return;
+    }
+
+    const token = ++mappingRenderToken;
+    mapper.setAttribute('aria-busy', 'true');
+    mapper.textContent = 'Scanning current openings and preset worldbook entries...';
+
+    try {
+        const rows = getOpeningRows();
+        const { presets, maps, worldNames } = await loadPresetEntries();
+        if (token !== mappingRenderToken) {
+            return;
+        }
+
+        const worldMapData = parseFirstMap(maps);
+        const storedMap = getStoredOpeningPresetMap();
+        const presetOptions = getPresetOptions(presets);
+        const presetIds = new Set(presetOptions.map(option => option.id));
+        const currentSwipeIndex = getCurrentSwipeIndex();
+        const fragment = document.createDocumentFragment();
+
+        mapper.textContent = '';
+        mapper.removeAttribute('aria-busy');
+
+        if (rows.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'mvu-initvar-switcher-empty';
+            empty.textContent = 'No current opening was found for this character/chat.';
+            fragment.append(empty);
+        }
+
+        for (const row of rows) {
+            const savedId = getMapValue(storedMap, row.index);
+            const inheritedId = getMapValue(worldMapData, row.index);
+            const inlineId = getPresetIdFromText(row.text);
+            const resolution = getOpeningPresetResolutionForRow(row, worldMapData, storedMap);
+            const rowElement = document.createElement('div');
+            const selectId = `${MODULE_NAME}_opening_${row.index}`;
+            rowElement.className = 'mvu-initvar-switcher-mapping-row';
+            if (row.index === currentSwipeIndex) {
+                rowElement.dataset.current = 'true';
+            }
+
+            const label = document.createElement('label');
+            label.className = 'mvu-initvar-switcher-mapping-label';
+            label.htmlFor = selectId;
+
+            const title = document.createElement('span');
+            title.className = 'mvu-initvar-switcher-mapping-title';
+            title.textContent = `Opening #${row.index}${row.index === currentSwipeIndex ? ' (current)' : ''}`;
+
+            const preview = document.createElement('span');
+            preview.className = 'mvu-initvar-switcher-mapping-preview';
+            preview.textContent = getOpeningPreview(row.text);
+
+            label.append(title, preview);
+
+            const select = document.createElement('select');
+            select.id = selectId;
+            select.className = 'text_pole mvu-initvar-switcher-mapping-select';
+
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = inlineId
+                ? `Use inline marker: ${inlineId}`
+                : inheritedId
+                    ? `Use [MVU_INIT_MAP]: ${inheritedId}`
+                    : `Use default [MVU_INIT_PRESET:${row.index}]`;
+            select.append(defaultOption);
+
+            for (const optionData of presetOptions) {
+                const option = document.createElement('option');
+                option.value = optionData.id;
+                option.textContent = getPresetOptionLabel(optionData);
+                select.append(option);
+            }
+
+            if (savedId && !presetIds.has(savedId)) {
+                const missingOption = document.createElement('option');
+                missingOption.value = savedId;
+                missingOption.textContent = `${savedId} (saved, not found)`;
+                select.append(missingOption);
+            }
+
+            select.value = savedId ?? '';
+            select.addEventListener('change', () => {
+                setStoredOpeningPreset(row.index, select.value);
+                updateStatus(select.value
+                    ? `Opening #${row.index} now maps to preset '${select.value}'.`
+                    : `Opening #${row.index} now uses its inline/worldbook/default mapping.`,
+                'ok');
+                void renderMappingEditor();
+            });
+
+            const meta = document.createElement('div');
+            meta.className = 'mvu-initvar-switcher-mapping-meta';
+            meta.textContent = `Effective: ${resolution.presetId} (${resolution.source})${presetIds.has(resolution.presetId) ? '' : ' - preset not found'}; source: ${row.source}.`;
+
+            rowElement.append(label, select, meta);
+            fragment.append(rowElement);
+        }
+
+        mapper.append(fragment);
+        renderMappingSummary({ presets, maps, worldNames, rows, worldMapData, storedMap });
+    } catch (error) {
+        mapper.removeAttribute('aria-busy');
+        mapper.textContent = `Workbench scan failed: ${error.message}`;
+        const summary = document.getElementById(`${MODULE_NAME}_mapper_summary`);
+        if (summary) {
+            summary.textContent = '';
+            summary.dataset.type = 'error';
+        }
+        logError('Workbench scan failed', error);
+    }
+}
+
 function getDefaultSettingsTarget() {
     return document.querySelector('#extensions_settings2') ?? document.querySelector('#extensions_settings') ?? document.body;
 }
@@ -775,6 +1256,7 @@ function renderSettings(target = getDefaultSettingsTarget()) {
         if (existing.parentElement !== target) {
             target.append(existing);
         }
+        void renderMappingEditor();
         return existing;
     }
 
@@ -794,36 +1276,49 @@ function renderSettings(target = getDefaultSettingsTarget()) {
                 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content">
-                <label class="checkbox_label" for="${MODULE_NAME}_enabled">
-                    <input id="${MODULE_NAME}_enabled" type="checkbox">
-                    Enable switcher
-                </label>
-                <label class="checkbox_label" for="${MODULE_NAME}_auto">
-                    <input id="${MODULE_NAME}_auto" type="checkbox">
-                    Auto-apply on new chat / opening swipe
-                </label>
-                <label class="checkbox_label" for="${MODULE_NAME}_after_started">
-                    <input id="${MODULE_NAME}_after_started" type="checkbox">
-                    Allow auto overwrite after chat has started
-                </label>
-                <label class="checkbox_label" for="${MODULE_NAME}_toasts">
-                    <input id="${MODULE_NAME}_toasts" type="checkbox">
-                    Show toast notifications
-                </label>
-                <label for="${MODULE_NAME}_mode">Apply mode</label>
-                <select id="${MODULE_NAME}_mode" class="text_pole">
-                    <option value="replace">Replace stat_data with preset</option>
-                    <option value="merge">Merge preset into current stat_data</option>
-                </select>
-                <label for="${MODULE_NAME}_source">Preset search scope</label>
-                <select id="${MODULE_NAME}_source" class="text_pole">
-                    <option value="active">Active character/chat/global books</option>
-                    <option value="all">All loaded world info books</option>
-                </select>
-                <div class="mvu-initvar-switcher-actions">
-                    <button id="${MODULE_NAME}_scan" class="menu_button" type="button">Scan Current Preset</button>
-                    <button id="${MODULE_NAME}_apply" class="menu_button" type="button">Apply Current Preset</button>
-                </div>
+                <fieldset class="mvu-initvar-switcher-fieldset">
+                    <legend>Switcher</legend>
+                    <label class="checkbox_label" for="${MODULE_NAME}_enabled">
+                        <input id="${MODULE_NAME}_enabled" type="checkbox">
+                        Enable switcher
+                    </label>
+                    <label class="checkbox_label" for="${MODULE_NAME}_auto">
+                        <input id="${MODULE_NAME}_auto" type="checkbox">
+                        Auto-apply on new chat / opening swipe
+                    </label>
+                    <label class="checkbox_label" for="${MODULE_NAME}_after_started">
+                        <input id="${MODULE_NAME}_after_started" type="checkbox">
+                        Allow auto overwrite after chat has started
+                    </label>
+                    <label class="checkbox_label" for="${MODULE_NAME}_toasts">
+                        <input id="${MODULE_NAME}_toasts" type="checkbox">
+                        Show toast notifications
+                    </label>
+                    <label for="${MODULE_NAME}_mode">Apply mode</label>
+                    <select id="${MODULE_NAME}_mode" class="text_pole">
+                        <option value="replace">Replace stat_data with preset</option>
+                        <option value="merge">Merge preset into current stat_data</option>
+                    </select>
+                    <label for="${MODULE_NAME}_source">Preset search scope</label>
+                    <select id="${MODULE_NAME}_source" class="text_pole">
+                        <option value="active">Active character/chat/global books</option>
+                        <option value="all">All loaded world info books</option>
+                    </select>
+                    <div class="mvu-initvar-switcher-actions">
+                        <button id="${MODULE_NAME}_scan" class="menu_button" type="button">Scan Current Preset</button>
+                        <button id="${MODULE_NAME}_apply" class="menu_button" type="button">Apply Current Preset</button>
+                    </div>
+                </fieldset>
+                <fieldset class="mvu-initvar-switcher-fieldset">
+                    <legend>Opening Workbench</legend>
+                    <div class="mvu-initvar-switcher-actions">
+                        <button id="${MODULE_NAME}_refresh_map" class="menu_button" type="button">Refresh Openings/Presets</button>
+                        <button id="${MODULE_NAME}_copy_map" class="menu_button" type="button">Copy [MVU_INIT_MAP] JSON</button>
+                        <button id="${MODULE_NAME}_clear_map" class="menu_button" type="button">Clear Workbench Map</button>
+                    </div>
+                    <div id="${MODULE_NAME}_mapper_summary" class="mvu-initvar-switcher-summary" role="status" aria-live="polite"></div>
+                    <div id="${MODULE_NAME}_mapper" class="mvu-initvar-switcher-mapper" role="region" aria-label="Opening to initvar preset mapping" aria-live="polite"></div>
+                </fieldset>
                 <div id="${MODULE_NAME}_status" class="mvu-initvar-switcher-status" data-type="info">
                     Ready. Current opening defaults to [MVU_INIT_PRESET:swipeIndex].
                 </div>
@@ -870,6 +1365,7 @@ function renderSettings(target = getDefaultSettingsTarget()) {
     source.addEventListener('change', () => {
         settings.presetSource = source.value === 'all' ? 'all' : 'active';
         saveSettings();
+        void renderMappingEditor();
     });
 
     document.getElementById(`${MODULE_NAME}_scan`)?.addEventListener('click', scanCurrentPreset);
@@ -881,6 +1377,22 @@ function renderSettings(target = getDefaultSettingsTarget()) {
             updateStatus(`Manual apply failed: ${error.message}`, 'error');
         }
     });
+    document.getElementById(`${MODULE_NAME}_refresh_map`)?.addEventListener('click', () => {
+        void renderMappingEditor();
+    });
+    document.getElementById(`${MODULE_NAME}_copy_map`)?.addEventListener('click', () => {
+        void copyOpeningPresetMap();
+    });
+    document.getElementById(`${MODULE_NAME}_clear_map`)?.addEventListener('click', () => {
+        const hasMap = getSortedMapEntries(getStoredOpeningPresetMap()).length > 0;
+        if (!hasMap || globalThis.confirm?.('Clear workbench mappings for the current character?') !== false) {
+            clearStoredOpeningPresetMap();
+            updateStatus('Workbench mappings cleared for the current character.', 'ok');
+            void renderMappingEditor();
+        }
+    });
+
+    void renderMappingEditor();
 
     return container;
 }
@@ -1013,7 +1525,10 @@ function registerEvents() {
         return;
     }
 
-    const delayedAutoApply = () => setTimeout(autoApplyCurrentPreset, 300);
+    const delayedAutoApply = () => setTimeout(() => {
+        void autoApplyCurrentPreset();
+        void renderMappingEditor();
+    }, 300);
     for (const eventType of [eventTypes.CHAT_CHANGED, eventTypes.CHAT_CREATED, eventTypes.MESSAGE_SWIPED, eventTypes.WORLDINFO_UPDATED]) {
         if (eventType && !registeredEventTypes.has(eventType)) {
             registeredEventTypes.add(eventType);

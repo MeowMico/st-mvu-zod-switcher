@@ -26,6 +26,7 @@ export type Settings = {
   presetSource: 'active' | 'all';
   allowAfterChatStarted: boolean;
   showToasts: boolean;
+  openingPresetMap: Record<string, string>;
 };
 
 export type PresetEntry = {
@@ -53,6 +54,7 @@ export const defaultSettings: Settings = Object.freeze({
   presetSource: 'active',
   allowAfterChatStarted: false,
   showToasts: true,
+  openingPresetMap: {},
 });
 
 export function isPlainObject(value: unknown): value is JsonRecord {

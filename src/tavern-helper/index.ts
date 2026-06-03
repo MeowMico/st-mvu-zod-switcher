@@ -44,6 +44,12 @@ declare const getButtonEvent: ((buttonName: string) => string) | undefined;
 declare const appendInexistentScriptButtons: ((buttons: { name: string; visible: boolean }[]) => void) | undefined;
 declare const replaceScriptInfo: ((info: string) => void) | undefined;
 declare const eventEmit: ((eventType: string, ...args: any[]) => Promise<void>) | undefined;
+declare const getScriptId: (() => string) | undefined;
+declare const getVariables: ((option?: Record<string, any>) => Record<string, any>) | undefined;
+declare const updateVariablesWith: ((
+  updater: (variables: Record<string, any>) => Record<string, any> | Promise<Record<string, any>>,
+  option?: Record<string, any>,
+) => Promise<Record<string, any>>) | undefined;
 declare const tavern_events: Record<string, string> | undefined;
 declare const toastr: Record<string, ((message: string, title?: string) => void) | undefined> | undefined;
 
@@ -78,6 +84,11 @@ type PresetResolution = {
   inlineId: string | null;
 };
 
+type OpeningRow = {
+  index: number;
+  text: string;
+};
+
 const BUTTONS = [
   { name: '扫描当前预设', visible: true },
   { name: '手动应用当前预设', visible: true },
@@ -98,6 +109,39 @@ function getScriptData(): Record<string, any> {
   return root[MODULE_NAME];
 }
 
+function getScriptVariableOption(): Record<string, any> | null {
+  if (typeof getScriptId !== 'function') {
+    return null;
+  }
+
+  return { type: 'script', script_id: getScriptId() };
+}
+
+function hydrateSettingsFromScriptVariables(): void {
+  if (typeof getVariables !== 'function') {
+    return;
+  }
+
+  const option = getScriptVariableOption();
+  if (!option) {
+    return;
+  }
+
+  try {
+    const variables = getVariables(option);
+    const savedSettings = isPlainObject(variables?.[MODULE_NAME]) ? variables[MODULE_NAME].settings : null;
+    if (isPlainObject(savedSettings)) {
+      const data = getScriptData();
+      data.settings = {
+        ...(isPlainObject(data.settings) ? data.settings : {}),
+        ...savedSettings,
+      };
+    }
+  } catch (error) {
+    console.warn(`[${DISPLAY_NAME}] Failed to load script settings`, error);
+  }
+}
+
 function getSettings(): Settings {
   const data = getScriptData();
   if (!isPlainObject(data.settings)) {
@@ -113,7 +157,36 @@ function getSettings(): Settings {
 
   settings.applyMode = settings.applyMode === 'merge' ? 'merge' : 'replace';
   settings.presetSource = settings.presetSource === 'all' ? 'all' : 'active';
+  if (!isPlainObject(settings.openingPresetMap)) {
+    settings.openingPresetMap = {};
+  }
   return settings as Settings;
+}
+
+async function saveSettings(): Promise<void> {
+  renderSettingsValues();
+
+  if (typeof updateVariablesWith !== 'function') {
+    return;
+  }
+
+  const option = getScriptVariableOption();
+  if (!option) {
+    return;
+  }
+
+  const settings = deepClone(getSettings());
+  try {
+    await updateVariablesWith((variables) => ({
+      ...variables,
+      [MODULE_NAME]: {
+        ...(isPlainObject(variables?.[MODULE_NAME]) ? variables[MODULE_NAME] : {}),
+        settings,
+      },
+    }), option);
+  } catch (error) {
+    console.warn(`[${DISPLAY_NAME}] Failed to save script settings`, error);
+  }
 }
 
 function showToast(type: 'success' | 'info' | 'warning' | 'error', message: string): void {
@@ -130,6 +203,12 @@ function showToast(type: 'success' | 'info' | 'warning' | 'error', message: stri
 
 function updateStatus(message: string, type = 'info'): void {
   console.info(`[${DISPLAY_NAME}] ${message}`);
+  const status = document.getElementById(`${MODULE_NAME}_status`);
+  if (status) {
+    status.textContent = message;
+    status.dataset.type = type;
+  }
+
   const state = getChatState();
   if (state) {
     state.lastStatus = {
@@ -139,6 +218,367 @@ function updateStatus(message: string, type = 'info'): void {
     };
     void saveChatState();
   }
+}
+
+function renderSettingsValues(): void {
+  const settings = getSettings();
+  const enabled = document.getElementById(`${MODULE_NAME}_enabled`) as HTMLInputElement | null;
+  const auto = document.getElementById(`${MODULE_NAME}_auto`) as HTMLInputElement | null;
+  const afterStarted = document.getElementById(`${MODULE_NAME}_after_started`) as HTMLInputElement | null;
+  const toasts = document.getElementById(`${MODULE_NAME}_toasts`) as HTMLInputElement | null;
+  const mode = document.getElementById(`${MODULE_NAME}_mode`) as HTMLSelectElement | null;
+  const source = document.getElementById(`${MODULE_NAME}_source`) as HTMLSelectElement | null;
+
+  if (enabled) enabled.checked = !!settings.enabled;
+  if (auto) auto.checked = !!settings.autoApplyOnNewChat;
+  if (afterStarted) afterStarted.checked = !!settings.allowAfterChatStarted;
+  if (toasts) toasts.checked = !!settings.showToasts;
+  if (mode) mode.value = settings.applyMode;
+  if (source) source.value = settings.presetSource;
+}
+
+function getOpeningRows(): OpeningRow[] {
+  const opening = getCurrentOpeningMessage();
+  if (Array.isArray(opening?.swipes) && opening.swipes.length) {
+    return opening.swipes.map((text: unknown, index: number) => ({
+      index,
+      text: String(text ?? ''),
+    }));
+  }
+
+  return [{
+    index: getCurrentSwipeIndex(),
+    text: getCurrentOpeningText(),
+  }];
+}
+
+function getOpeningPreview(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return '(empty opening)';
+  }
+
+  return normalized.length > 96 ? `${normalized.slice(0, 96)}...` : normalized;
+}
+
+function getStoredOpeningPresetMap(): Record<string, string> {
+  const settings = getSettings();
+  return isPlainObject(settings.openingPresetMap) ? settings.openingPresetMap : {};
+}
+
+function setStoredOpeningPreset(index: number, presetId: string): void {
+  const settings = getSettings();
+  const map = { ...getStoredOpeningPresetMap() };
+  const key = String(index);
+  if (presetId) {
+    map[key] = presetId;
+  } else {
+    delete map[key];
+  }
+  settings.openingPresetMap = map;
+}
+
+async function copyOpeningPresetMap(): Promise<void> {
+  const map = getStoredOpeningPresetMap();
+  const text = JSON.stringify(map, null, 2);
+  if (!isPlainObject(map) || Object.keys(map).length === 0) {
+    updateStatus('当前还没有保存任何开场映射。', 'warn');
+    return;
+  }
+
+  if (!navigator.clipboard?.writeText) {
+    updateStatus(`当前浏览器不支持自动复制，请手动复制：\n${text}`, 'warn');
+    return;
+  }
+
+  await navigator.clipboard.writeText(text);
+  updateStatus('已复制 [MVU_INIT_MAP] JSON。', 'ok');
+  showToast('success', '已复制 [MVU_INIT_MAP] JSON。');
+}
+
+async function renderMappingEditor(): Promise<void> {
+  const mount = document.getElementById(`${MODULE_NAME}_mapper`);
+  if (!mount) {
+    return;
+  }
+
+  mount.textContent = 'Loading openings and presets...';
+  let presets: PresetEntry[] = [];
+  let maps: MapEntry[] = [];
+  let worldNames: string[] = [];
+  try {
+    const loaded = await loadPresetEntries();
+    presets = loaded.presets;
+    maps = loaded.maps;
+    worldNames = loaded.worldNames;
+  } catch (error) {
+    mount.textContent = `Failed to load presets: ${error instanceof Error ? error.message : String(error)}`;
+    return;
+  }
+
+  const rows = getOpeningRows();
+  const storedMap = getStoredOpeningPresetMap();
+  const uniquePresetIds = [...new Map(presets.map(preset => [preset.id, preset])).values()];
+
+  const controls = document.createElement('div');
+  controls.className = 'mvu-initvar-switcher-th-mapper';
+
+  if (!rows.length) {
+    controls.textContent = 'No opening message was found.';
+    mount.replaceChildren(controls);
+    return;
+  }
+
+  for (const row of rows) {
+    const rowElement = document.createElement('div');
+    rowElement.className = 'mvu-initvar-switcher-th-map-row';
+
+    const label = document.createElement('label');
+    label.htmlFor = `${MODULE_NAME}_map_${row.index}`;
+    label.className = 'mvu-initvar-switcher-th-map-label';
+    label.textContent = `Opening #${row.index}: ${getOpeningPreview(row.text)}`;
+
+    const select = document.createElement('select');
+    select.id = `${MODULE_NAME}_map_${row.index}`;
+    select.className = 'text_pole';
+    select.dataset.swipeIndex = String(row.index);
+    select.setAttribute('aria-label', `Preset for opening ${row.index}`);
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = `Use default [MVU_INIT_PRESET:${row.index}]`;
+    select.append(defaultOption);
+
+    for (const preset of uniquePresetIds) {
+      const option = document.createElement('option');
+      option.value = preset.id;
+      option.textContent = `${preset.id} (${preset.worldName})`;
+      select.append(option);
+    }
+
+    select.value = typeof storedMap[String(row.index)] === 'string' ? storedMap[String(row.index)] : '';
+    select.addEventListener('change', () => {
+      setStoredOpeningPreset(row.index, select.value);
+      void saveSettings();
+      void renderMappingSummary(presets, maps, worldNames);
+      updateStatus(`Opening #${row.index} is mapped to '${select.value || row.index}'.`, 'ok');
+    });
+
+    rowElement.append(label, select);
+    controls.append(rowElement);
+  }
+
+  mount.replaceChildren(controls);
+  await renderMappingSummary(presets, maps, worldNames);
+}
+
+async function renderMappingSummary(presets: PresetEntry[], maps: MapEntry[], worldNames: string[]): Promise<void> {
+  const summary = document.getElementById(`${MODULE_NAME}_mapper_summary`);
+  if (!summary) {
+    return;
+  }
+
+  const storedMap = getStoredOpeningPresetMap();
+  const missingPresetIds = Object.values(storedMap).filter(id => id && !presets.some(preset => preset.id === id));
+  const mapLines = Object.entries(storedMap).map(([opening, presetId]) => `#${opening} -> ${presetId}`);
+
+  summary.textContent = [
+    `Found ${presets.length} preset entr${presets.length === 1 ? 'y' : 'ies'} in ${worldNames.length} worldbook${worldNames.length === 1 ? '' : 's'}.`,
+    maps.length ? `Worldbook map entries: ${maps.length}. Frontend mappings override worldbook maps.` : 'No [MVU_INIT_MAP] entry found. Frontend mappings can replace it.',
+    mapLines.length ? `Saved frontend mappings: ${mapLines.join(', ')}` : 'Saved frontend mappings: none.',
+    missingPresetIds.length ? `Missing preset ids: ${[...new Set(missingPresetIds)].join(', ')}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function renderSettingsPanel(): void {
+  if (document.getElementById(`${MODULE_NAME}_settings`)) {
+    renderSettingsValues();
+    return;
+  }
+
+  const settingsTarget = document.querySelector('#extensions_settings2') ?? document.querySelector('#extensions_settings') ?? document.body;
+  if (!settingsTarget) {
+    return;
+  }
+
+  const container = document.createElement('div');
+  container.id = `${MODULE_NAME}_settings`;
+  container.className = 'mvu-initvar-switcher-th-settings';
+  container.innerHTML = `
+    <style>
+      .mvu-initvar-switcher-th-settings .inline-drawer-content {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .mvu-initvar-switcher-th-settings .mvu-initvar-switcher-th-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.25rem;
+      }
+      .mvu-initvar-switcher-th-status {
+        border: 1px solid var(--SmartThemeBorderColor);
+        border-radius: 6px;
+        padding: 0.5rem;
+        white-space: pre-wrap;
+      }
+      .mvu-initvar-switcher-th-status[data-type='ok'] {
+        border-color: #4caf50;
+      }
+      .mvu-initvar-switcher-th-status[data-type='warn'] {
+        border-color: #ff9800;
+      }
+      .mvu-initvar-switcher-th-status[data-type='error'] {
+        border-color: #f44336;
+      }
+      .mvu-initvar-switcher-th-map-tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .mvu-initvar-switcher-th-mapper {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .mvu-initvar-switcher-th-map-row {
+        display: grid;
+        grid-template-columns: minmax(14rem, 1fr) minmax(12rem, 18rem);
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .mvu-initvar-switcher-th-map-label {
+        overflow-wrap: anywhere;
+      }
+      .mvu-initvar-switcher-th-map-summary {
+        border: 1px solid var(--SmartThemeBorderColor);
+        border-radius: 6px;
+        padding: 0.5rem;
+        white-space: pre-wrap;
+      }
+      @media (max-width: 640px) {
+        .mvu-initvar-switcher-th-map-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+    <div class="inline-drawer">
+      <div class="inline-drawer-toggle inline-drawer-header">
+        <b>MVU InitVar Switcher (Tavern Helper)</b>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+      </div>
+      <div class="inline-drawer-content">
+        <label class="checkbox_label" for="${MODULE_NAME}_enabled">
+          <input id="${MODULE_NAME}_enabled" type="checkbox">
+          Enable switcher
+        </label>
+        <label class="checkbox_label" for="${MODULE_NAME}_auto">
+          <input id="${MODULE_NAME}_auto" type="checkbox">
+          Auto-apply on new chat / opening swipe
+        </label>
+        <label class="checkbox_label" for="${MODULE_NAME}_after_started">
+          <input id="${MODULE_NAME}_after_started" type="checkbox">
+          Allow auto overwrite after chat has started
+        </label>
+        <label class="checkbox_label" for="${MODULE_NAME}_toasts">
+          <input id="${MODULE_NAME}_toasts" type="checkbox">
+          Show toast notifications
+        </label>
+        <label for="${MODULE_NAME}_mode">Apply mode</label>
+        <select id="${MODULE_NAME}_mode" class="text_pole">
+          <option value="replace">Replace stat_data with preset</option>
+          <option value="merge">Merge preset into current stat_data</option>
+        </select>
+        <label for="${MODULE_NAME}_source">Preset search scope</label>
+        <select id="${MODULE_NAME}_source" class="text_pole">
+          <option value="active">Character/global worldbooks</option>
+          <option value="all">All worldbooks</option>
+        </select>
+        <div class="mvu-initvar-switcher-th-actions">
+          <button id="${MODULE_NAME}_scan" class="menu_button" type="button">扫描当前预设</button>
+          <button id="${MODULE_NAME}_apply" class="menu_button" type="button">手动应用当前预设</button>
+          <button id="${MODULE_NAME}_clear" class="menu_button" type="button">清除已应用记录</button>
+        </div>
+        <fieldset>
+          <legend>Opening to initvar preset map</legend>
+          <div class="mvu-initvar-switcher-th-map-tools">
+            <button id="${MODULE_NAME}_refresh_map" class="menu_button" type="button">刷新开场/预设列表</button>
+            <button id="${MODULE_NAME}_copy_map" class="menu_button" type="button">复制 [MVU_INIT_MAP] JSON</button>
+            <button id="${MODULE_NAME}_clear_map" class="menu_button" type="button">清空前端映射</button>
+          </div>
+          <p>
+            Use the selects below to bind each opening swipe to an initvar preset. Inline opening markers still have the highest priority.
+          </p>
+          <div id="${MODULE_NAME}_mapper" aria-live="polite"></div>
+          <div id="${MODULE_NAME}_mapper_summary" class="mvu-initvar-switcher-th-map-summary" aria-live="polite"></div>
+        </fieldset>
+        <div id="${MODULE_NAME}_status" class="mvu-initvar-switcher-th-status" data-type="info">
+          Ready. Current opening defaults to [MVU_INIT_PRESET:swipeIndex].
+        </div>
+      </div>
+    </div>
+  `;
+
+  settingsTarget.append(container);
+  renderSettingsValues();
+
+  const settings = getSettings();
+  const enabled = document.getElementById(`${MODULE_NAME}_enabled`) as HTMLInputElement | null;
+  const auto = document.getElementById(`${MODULE_NAME}_auto`) as HTMLInputElement | null;
+  const afterStarted = document.getElementById(`${MODULE_NAME}_after_started`) as HTMLInputElement | null;
+  const toasts = document.getElementById(`${MODULE_NAME}_toasts`) as HTMLInputElement | null;
+  const mode = document.getElementById(`${MODULE_NAME}_mode`) as HTMLSelectElement | null;
+  const source = document.getElementById(`${MODULE_NAME}_source`) as HTMLSelectElement | null;
+
+  enabled?.addEventListener('change', () => {
+    settings.enabled = !!enabled.checked;
+    void saveSettings();
+  });
+  auto?.addEventListener('change', () => {
+    settings.autoApplyOnNewChat = !!auto.checked;
+    void saveSettings();
+  });
+  afterStarted?.addEventListener('change', () => {
+    settings.allowAfterChatStarted = !!afterStarted.checked;
+    void saveSettings();
+  });
+  toasts?.addEventListener('change', () => {
+    settings.showToasts = !!toasts.checked;
+    void saveSettings();
+  });
+  mode?.addEventListener('change', () => {
+    settings.applyMode = mode.value === 'merge' ? 'merge' : 'replace';
+    void saveSettings();
+  });
+  source?.addEventListener('change', () => {
+    settings.presetSource = source.value === 'all' ? 'all' : 'active';
+    void saveSettings();
+  });
+
+  document.getElementById(`${MODULE_NAME}_scan`)?.addEventListener('click', () => {
+    void scanCurrentPreset();
+  });
+  document.getElementById(`${MODULE_NAME}_apply`)?.addEventListener('click', () => {
+    void applyCurrentPreset({ force: true }).catch(error => logError('Manual apply failed', error));
+  });
+  document.getElementById(`${MODULE_NAME}_clear`)?.addEventListener('click', () => {
+    void clearAppliedRecords();
+  });
+  document.getElementById(`${MODULE_NAME}_refresh_map`)?.addEventListener('click', () => {
+    void renderMappingEditor();
+  });
+  document.getElementById(`${MODULE_NAME}_copy_map`)?.addEventListener('click', () => {
+    void copyOpeningPresetMap().catch(error => logError('Copy map failed', error));
+  });
+  document.getElementById(`${MODULE_NAME}_clear_map`)?.addEventListener('click', () => {
+    getSettings().openingPresetMap = {};
+    void saveSettings();
+    void renderMappingEditor();
+    updateStatus('已清空前端开场映射。', 'ok');
+  });
+
+  void renderMappingEditor();
 }
 
 function logError(message: string, error: unknown): void {
@@ -393,7 +833,11 @@ async function resolveCurrentPreset(): Promise<PresetResolution> {
     swipeIndex: getCurrentSwipeIndex(),
     text: getCurrentOpeningText(),
   };
-  const mapData = parseFirstMap(maps, getYamlParser());
+  const worldMapData = parseFirstMap(maps, getYamlParser());
+  const mapData = {
+    ...(isPlainObject(worldMapData) ? worldMapData : {}),
+    ...getStoredOpeningPresetMap(),
+  };
   const presetId = getCurrentPresetId(opening, mapData);
   const preset = presets.find(entry => entry.id === presetId);
 
@@ -611,7 +1055,9 @@ function init(): void {
   }
 
   didInit = true;
+  hydrateSettingsFromScriptVariables();
   getSettings();
+  renderSettingsPanel();
   renderScriptInfo();
   registerButtons();
   registerEvents();

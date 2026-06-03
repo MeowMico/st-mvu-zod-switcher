@@ -14,7 +14,8 @@ var defaultSettings = Object.freeze({
   applyMode: "replace",
   presetSource: "active",
   allowAfterChatStarted: false,
-  showToasts: true
+  showToasts: true,
+  openingPresetMap: {}
 });
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);

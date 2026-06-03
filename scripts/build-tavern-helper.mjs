@@ -62,7 +62,7 @@ const installSnippet = `// Install MVU InitVar Switcher into the current charact
   `      info: 'Switches MVU initvar presets based on the current opening swipe.',\n` +
   `      button: { enabled: true, buttons: BUTTONS },\n` +
   `      data: {},\n` +
-  `      export_with: { data: false, button: true },\n` +
+  `      export_with: { data: true, button: true },\n` +
   `    };\n` +
   `\n` +
   `    const upsert = (items) => {\n` +

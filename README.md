@@ -64,6 +64,16 @@ The script adds three optional troubleshooting buttons:
 - `手动应用当前预设`: force-applies the current preset even after chat has started.
 - `清除已应用记录`: clears this chat's applied-preset record so the same preset can auto-apply again.
 
+It also renders a small settings panel in SillyTavern's extension settings area:
+
+- Enable/disable auto-apply.
+- Choose `replace` or `merge` mode.
+- Pick whether automatic overwrites after chat start are allowed.
+- Map each opening swipe to a discovered `[MVU_INIT_PRESET:*]` entry with accessible labeled selects.
+- Copy the saved frontend map as `[MVU_INIT_MAP]` JSON if you want to store the mapping in a worldbook entry instead.
+
+Frontend mappings are saved in the Tavern Helper script variables when that API is available. They override `[MVU_INIT_MAP]`, while inline opening markers such as `<!-- mvu-init-preset:church -->` still have the highest priority.
+
 ## Basic Author Workflow
 
 Create one world info entry for each opening:

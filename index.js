@@ -1,7 +1,9 @@
 const MODULE_NAME = 'mvu_initvar_switcher';
 const DISPLAY_NAME = 'MVU InitVar Switcher';
+const DEFAULT_INITVAR_ENTRY_COMMENT = '[initvar]变量初始化勿开';
 const PRESET_COMMENT_PATTERN = /\[MVU_INIT_PRESET\s*[:#]\s*([^\]\s]+)\s*\]/i;
 const MAP_COMMENT_PATTERN = /\[MVU_INIT_MAP\]/i;
+const INITVAR_COMMENT_PATTERN = /\[initvar\]/i;
 const INLINE_PRESET_PATTERNS = [
     /<mvu-init-preset>\s*([^<\s]+)\s*<\/mvu-init-preset>/i,
     /<!--\s*mvu-init-preset\s*[:#]\s*([^\s-]+)\s*-->/i,
@@ -20,6 +22,9 @@ const defaultSettings = Object.freeze({
     allowAfterChatStarted: false,
     showToasts: true,
     openingPresetMaps: {},
+    presetTargetWorldName: '',
+    initvarEntryComment: DEFAULT_INITVAR_ENTRY_COMMENT,
+    syncInitvarEntry: true,
 });
 
 function getContext() {
@@ -152,6 +157,259 @@ function clearStoredOpeningPresetMap() {
     const maps = getOpeningPresetMaps();
     delete maps[getCurrentCharacterKey()];
     saveSettings();
+}
+
+function getSafeCharacterName() {
+    const character = getCurrentCharacter();
+    const name = getStringValue(character?.name, character?.data?.name);
+    return name ? name.replace(/[\\/:*?"<>|]/g, '-').trim() : 'Current Character';
+}
+
+function getDefaultTargetWorldName() {
+    return `${getSafeCharacterName()} MVU InitVar Presets`;
+}
+
+function getTargetWorldName() {
+    const settings = getSettings();
+    const configured = String(settings.presetTargetWorldName ?? '').trim();
+    if (configured) {
+        return configured;
+    }
+
+    const activeNames = getActiveWorldInfoNames();
+    return activeNames[0] ?? getDefaultTargetWorldName();
+}
+
+function setTargetWorldName(worldName) {
+    const settings = getSettings();
+    settings.presetTargetWorldName = String(worldName ?? '').trim();
+    saveSettings();
+}
+
+function getInitvarEntryComment() {
+    const configured = String(getSettings().initvarEntryComment ?? '').trim();
+    return configured || DEFAULT_INITVAR_ENTRY_COMMENT;
+}
+
+function setInitvarEntryComment(comment) {
+    const settings = getSettings();
+    settings.initvarEntryComment = String(comment ?? '').trim() || DEFAULT_INITVAR_ENTRY_COMMENT;
+    saveSettings();
+}
+
+function normalizeWorldInfoEntries(worldData) {
+    if (Array.isArray(worldData?.entries)) {
+        const entries = {};
+        worldData.entries.forEach((entry, index) => {
+            const key = Number.isSafeInteger(Number(entry?.uid)) ? String(entry.uid) : String(index);
+            entries[key] = entry;
+        });
+        worldData.entries = entries;
+    } else if (!isPlainObject(worldData.entries)) {
+        worldData.entries = {};
+    }
+
+    return worldData.entries;
+}
+
+function getWorldInfoEntriesWithKeys(worldData) {
+    if (Array.isArray(worldData?.entries)) {
+        return worldData.entries.map((entry, index) => [String(entry?.uid ?? index), entry]);
+    }
+
+    if (isPlainObject(worldData?.entries)) {
+        return Object.entries(worldData.entries);
+    }
+
+    return [];
+}
+
+function getNextWorldInfoEntryUid(worldData) {
+    let maxUid = -1;
+    for (const [key, entry] of getWorldInfoEntriesWithKeys(worldData)) {
+        const keyNumber = Number(key);
+        const entryNumber = Number(entry?.uid);
+        if (Number.isSafeInteger(keyNumber)) {
+            maxUid = Math.max(maxUid, keyNumber);
+        }
+        if (Number.isSafeInteger(entryNumber)) {
+            maxUid = Math.max(maxUid, entryNumber);
+        }
+    }
+
+    return maxUid + 1;
+}
+
+function createWorldInfoEntry(comment, content, uid) {
+    return {
+        uid,
+        key: [],
+        keysecondary: [],
+        comment,
+        content: String(content ?? ''),
+        constant: false,
+        vectorized: false,
+        selective: true,
+        selectiveLogic: 0,
+        addMemo: true,
+        order: 100,
+        position: 0,
+        disable: true,
+        ignoreBudget: false,
+        excludeRecursion: false,
+        preventRecursion: false,
+        matchPersonaDescription: false,
+        matchCharacterDescription: false,
+        matchCharacterPersonality: false,
+        matchCharacterDepthPrompt: false,
+        matchScenario: false,
+        matchCreatorNotes: false,
+        delayUntilRecursion: 0,
+        probability: 100,
+        useProbability: true,
+        depth: 4,
+        outletName: '',
+        group: '',
+        groupOverride: false,
+        groupWeight: 100,
+        scanDepth: null,
+        caseSensitive: null,
+        matchWholeWords: null,
+        useGroupScoring: null,
+        automationId: '',
+        role: 0,
+        sticky: null,
+        cooldown: null,
+        delay: null,
+        characterFilterNames: [],
+        characterFilterTags: [],
+        characterFilterExclude: false,
+        triggers: [],
+    };
+}
+
+function findPresetEntryInWorld(worldData, presetId) {
+    const wantedId = String(presetId ?? '').trim();
+    if (!wantedId) {
+        return null;
+    }
+
+    for (const [key, entry] of getWorldInfoEntriesWithKeys(worldData)) {
+        const match = getEntryComment(entry).match(PRESET_COMMENT_PATTERN);
+        if (match?.[1]?.trim() === wantedId) {
+            return { key, entry };
+        }
+    }
+
+    return null;
+}
+
+function findInitvarEntryInWorld(worldData, wantedComment = getInitvarEntryComment()) {
+    const normalizedWanted = String(wantedComment ?? '').trim();
+    for (const [key, entry] of getWorldInfoEntriesWithKeys(worldData)) {
+        const comment = getEntryComment(entry);
+        if (normalizedWanted && comment.trim() === normalizedWanted) {
+            return { key, entry };
+        }
+    }
+
+    for (const [key, entry] of getWorldInfoEntriesWithKeys(worldData)) {
+        if (INITVAR_COMMENT_PATTERN.test(getEntryComment(entry))) {
+            return { key, entry };
+        }
+    }
+
+    return null;
+}
+
+async function loadEditableWorldInfo(worldName) {
+    const context = getContext();
+    const name = String(worldName ?? '').trim();
+    if (!name) {
+        throw new Error('Choose a target worldbook first.');
+    }
+    if (!context.loadWorldInfo) {
+        throw new Error('SillyTavern loadWorldInfo API is unavailable.');
+    }
+
+    let worldData = null;
+    try {
+        worldData = await context.loadWorldInfo(name);
+    } catch (error) {
+        console.warn(`[${DISPLAY_NAME}] Failed to load world info '${name}' before editing`, error);
+    }
+
+    if (!isPlainObject(worldData)) {
+        if (context.createNewWorldInfo) {
+            await context.createNewWorldInfo(name, { interactive: false });
+            worldData = await context.loadWorldInfo(name);
+        } else if (context.createWorldBook) {
+            await context.createWorldBook(name, { entries: {} });
+            worldData = await context.loadWorldInfo(name);
+        }
+        if (!isPlainObject(worldData)) {
+            worldData = { entries: {} };
+        }
+    }
+
+    normalizeWorldInfoEntries(worldData);
+    return worldData;
+}
+
+async function saveEditableWorldInfo(worldName, worldData) {
+    const context = getContext();
+    if (!context.saveWorldInfo) {
+        throw new Error('SillyTavern saveWorldInfo API is unavailable; this SillyTavern build may not support extension worldbook writes.');
+    }
+
+    await context.saveWorldInfo(worldName, worldData, true);
+    context.reloadWorldInfoEditor?.(worldName);
+}
+
+async function savePresetEntryToWorld(worldName, presetId, content, label = '') {
+    const normalizedId = String(presetId ?? '').trim();
+    if (!normalizedId) {
+        throw new Error('Preset id is required.');
+    }
+
+    const worldData = await loadEditableWorldInfo(worldName);
+    const entries = normalizeWorldInfoEntries(worldData);
+    const comment = `[MVU_INIT_PRESET:${normalizedId}]${label ? ` ${label}` : ''}`;
+    const existing = findPresetEntryInWorld(worldData, normalizedId);
+    if (existing) {
+        existing.entry.comment = comment;
+        existing.entry.content = String(content ?? '');
+        existing.entry.disable = true;
+        existing.entry.constant = false;
+        existing.entry.selective = true;
+    } else {
+        const uid = getNextWorldInfoEntryUid(worldData);
+        entries[String(uid)] = createWorldInfoEntry(comment, content, uid);
+    }
+
+    await saveEditableWorldInfo(worldName, worldData);
+    return { worldName, presetId: normalizedId, comment };
+}
+
+async function syncInitvarEntryToWorld(worldName, presetContent, presetId = '') {
+    const worldData = await loadEditableWorldInfo(worldName);
+    const entries = normalizeWorldInfoEntries(worldData);
+    const comment = getInitvarEntryComment();
+    const initvarContent = stripInitvarWrapper(presetContent);
+    const existing = findInitvarEntryInWorld(worldData, comment);
+    if (existing) {
+        existing.entry.comment = comment;
+        existing.entry.content = initvarContent;
+        existing.entry.disable = true;
+        existing.entry.constant = false;
+        existing.entry.selective = true;
+    } else {
+        const uid = getNextWorldInfoEntryUid(worldData);
+        entries[String(uid)] = createWorldInfoEntry(comment, initvarContent, uid);
+    }
+
+    await saveEditableWorldInfo(worldName, worldData);
+    return { worldName, presetId, comment };
 }
 
 function logError(message, error) {
@@ -731,6 +989,7 @@ function getActiveWorldInfoNames() {
     addWorldInfoName(names, character?.data?.characterBook);
     addWorldInfoName(names, context.power_user);
     addWorldInfoName(names, context.persona);
+    addWorldInfoName(names, getSettings().presetTargetWorldName);
 
     return [...names];
 }
@@ -903,12 +1162,6 @@ async function applyCurrentPreset({ force = false } = {}) {
         return { ok: false, reason: 'chat-started' };
     }
 
-    if (!await waitForMvuApi()) {
-        const message = 'MVU global API is not ready. Make sure MVU is installed and enabled.';
-        updateStatus(message, 'warn');
-        return { ok: false, reason: 'mvu-not-ready' };
-    }
-
     const resolved = await resolveCurrentPreset();
     if (!resolved.preset) {
         const message = `No preset found for id '${resolved.presetId}'.`;
@@ -916,9 +1169,27 @@ async function applyCurrentPreset({ force = false } = {}) {
         return { ok: false, reason: 'not-found', resolved };
     }
 
+    let syncMessage = '';
+    if (settings.syncInitvarEntry) {
+        try {
+            const synced = await syncInitvarEntryToWorld(getTargetWorldName(), resolved.preset.content, resolved.presetId);
+            syncMessage = ` Synced to '${synced.comment}' in '${synced.worldName}'.`;
+        } catch (error) {
+            syncMessage = ` Initvar entry sync failed: ${error.message}`;
+            console.warn(`[${DISPLAY_NAME}] Initvar entry sync failed`, error);
+            showToast('warning', syncMessage);
+        }
+    }
+
+    if (!await waitForMvuApi()) {
+        const message = `MVU global API is not ready. Make sure MVU is installed and enabled.${syncMessage}`;
+        updateStatus(message, 'warn');
+        return { ok: false, reason: 'mvu-not-ready', resolved };
+    }
+
     const fingerprint = getPresetFingerprint(resolved.preset, settings.applyMode);
     if (!force && isPresetAlreadyApplied(resolved.presetId, fingerprint)) {
-        const message = `Preset '${resolved.presetId}' is already applied for opening #${resolved.swipeIndex}.`;
+        const message = `Preset '${resolved.presetId}' is already applied for opening #${resolved.swipeIndex}.${syncMessage}`;
         updateStatus(message, 'ok');
         return { ok: true, skipped: true, resolved };
     }
@@ -929,7 +1200,7 @@ async function applyCurrentPreset({ force = false } = {}) {
     await replaceOpeningMvuData(nextData);
     await markApplied(resolved.presetId, resolved.preset, settings.applyMode, fingerprint);
 
-    const message = `Applied preset '${resolved.presetId}' from '${resolved.preset.worldName}' using ${settings.applyMode} mode.`;
+    const message = `Applied preset '${resolved.presetId}' from '${resolved.preset.worldName}' using ${settings.applyMode} mode.${syncMessage}`;
     updateStatus(message, 'ok');
     showToast('success', message);
     return { ok: true, resolved };
@@ -1010,6 +1281,65 @@ function getPresetOptions(presets) {
     }));
 }
 
+function getKnownWorldbookNames(extraNames = []) {
+    const context = getContext();
+    const names = new Set();
+    for (const name of extraNames) {
+        addWorldInfoName(names, name);
+    }
+    const allNames = context.getWorldInfoNames?.();
+    if (Array.isArray(allNames)) {
+        for (const name of allNames) {
+            addWorldInfoName(names, name);
+        }
+    }
+    for (const name of getActiveWorldInfoNames()) {
+        addWorldInfoName(names, name);
+    }
+    addWorldInfoName(names, getSettings().presetTargetWorldName);
+    addWorldInfoName(names, getDefaultTargetWorldName());
+
+    return [...names].sort((left, right) => left.localeCompare(right, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+    }));
+}
+
+function renderWorldbookDatalist(extraNames = []) {
+    const datalist = document.getElementById(`${MODULE_NAME}_worldbook_names`);
+    if (!datalist) {
+        return;
+    }
+
+    datalist.textContent = '';
+    for (const name of getKnownWorldbookNames(extraNames)) {
+        const option = document.createElement('option');
+        option.value = name;
+        datalist.append(option);
+    }
+}
+
+async function loadWorldInfoIfExists(worldName) {
+    const context = getContext();
+    const name = String(worldName ?? '').trim();
+    if (!name || !context.loadWorldInfo) {
+        return null;
+    }
+
+    try {
+        const worldData = await context.loadWorldInfo(name);
+        return isPlainObject(worldData) ? worldData : null;
+    } catch (error) {
+        console.warn(`[${DISPLAY_NAME}] Failed to load target world info '${name}' for preview`, error);
+        return null;
+    }
+}
+
+function getPresetById(presets, presetId) {
+    const normalized = String(presetId ?? '').trim();
+    return presets.find(preset => String(preset.id ?? '').trim() === normalized) ?? null;
+}
+
 function getPresetOptionLabel(option) {
     const worldNames = [...option.worldNames].join(', ') || 'unknown worldbook';
     const duplicateText = option.count > 1 ? `, ${option.count} entries` : '';
@@ -1086,6 +1416,7 @@ function renderMappingSummary({ presets, maps, worldNames, rows, worldMapData, s
     const worldMapEntries = getSortedMapEntries(worldMapData);
     const lines = [
         `${rows.length} opening(s), ${presets.length} preset entry/entries, ${worldNames.length} loaded worldbook(s).`,
+        `Target worldbook: ${getTargetWorldName()}. Synced entry: ${getInitvarEntryComment()} (${getSettings().syncInitvarEntry ? 'auto-sync on apply' : 'manual sync only'}).`,
         `Current opening #${getCurrentSwipeIndex()} -> ${currentResolution.presetId} (${currentResolution.source}).`,
         `Workbench map: ${formatMapEntries(storedEntries)}.`,
     ];
@@ -1127,6 +1458,59 @@ async function copyOpeningPresetMap() {
     updateStatus('Clipboard API was unavailable. A copy dialog was opened instead.', 'warn');
 }
 
+async function saveOpeningPresetFromControls(row, idInput, textarea, { sync = false } = {}) {
+    const presetId = String(idInput.value ?? '').trim();
+    const content = String(textarea.value ?? '').trim();
+    if (!presetId) {
+        updateStatus(`Opening #${row.index} needs a preset id before saving.`, 'warn');
+        idInput.focus();
+        return;
+    }
+    if (!content) {
+        updateStatus(`Opening #${row.index} preset content is empty. Paste YAML/JSON first.`, 'warn');
+        textarea.focus();
+        return;
+    }
+
+    const targetWorldName = getTargetWorldName();
+    await savePresetEntryToWorld(targetWorldName, presetId, content, `Opening #${row.index}`);
+    if (presetId === String(row.index)) {
+        setStoredOpeningPreset(row.index, '');
+    } else {
+        setStoredOpeningPreset(row.index, presetId);
+    }
+
+    let message = `Saved opening #${row.index} as [MVU_INIT_PRESET:${presetId}] in '${targetWorldName}'.`;
+    if (sync) {
+        await syncInitvarEntryToWorld(targetWorldName, content, presetId);
+        message += ` Synced it to '${getInitvarEntryComment()}'.`;
+    }
+
+    updateStatus(message, 'ok');
+    showToast('success', message);
+    await renderMappingEditor();
+}
+
+async function syncCurrentPresetToInitvarEntry() {
+    try {
+        const resolved = await resolveCurrentPreset();
+        if (!resolved.preset) {
+            updateStatus(`No preset found for id '${resolved.presetId}', so there is nothing to sync.`, 'warn');
+            return;
+        }
+
+        const targetWorldName = getTargetWorldName();
+        const synced = await syncInitvarEntryToWorld(targetWorldName, resolved.preset.content, resolved.presetId);
+        const message = `Synced preset '${resolved.presetId}' to '${synced.comment}' in '${synced.worldName}'.`;
+        updateStatus(message, 'ok');
+        showToast('success', message);
+        await renderMappingEditor();
+    } catch (error) {
+        logError('Manual initvar sync failed', error);
+        updateStatus(`Manual initvar sync failed: ${error.message}`, 'error');
+    }
+}
+
 async function renderMappingEditor() {
     const mapper = document.getElementById(`${MODULE_NAME}_mapper`);
     if (!mapper) {
@@ -1140,9 +1524,15 @@ async function renderMappingEditor() {
     try {
         const rows = getOpeningRows();
         const { presets, maps, worldNames } = await loadPresetEntries();
+        const targetWorldName = getTargetWorldName();
+        const targetWorldData = await loadWorldInfoIfExists(targetWorldName);
+        const targetInitvarEntry = targetWorldData ? findInitvarEntryInWorld(targetWorldData, getInitvarEntryComment()) : null;
+        const targetInitvarContent = String(targetInitvarEntry?.entry?.content ?? '');
         if (token !== mappingRenderToken) {
             return;
         }
+
+        renderWorldbookDatalist([...worldNames, targetWorldName]);
 
         const worldMapData = parseFirstMap(maps);
         const storedMap = getStoredOpeningPresetMap();
@@ -1166,8 +1556,11 @@ async function renderMappingEditor() {
             const inheritedId = getMapValue(worldMapData, row.index);
             const inlineId = getPresetIdFromText(row.text);
             const resolution = getOpeningPresetResolutionForRow(row, worldMapData, storedMap);
+            const resolvedPreset = getPresetById(presets, resolution.presetId);
             const rowElement = document.createElement('div');
             const selectId = `${MODULE_NAME}_opening_${row.index}`;
+            const presetIdInputId = `${MODULE_NAME}_preset_id_${row.index}`;
+            const textareaId = `${MODULE_NAME}_preset_content_${row.index}`;
             rowElement.className = 'mvu-initvar-switcher-mapping-row';
             if (row.index === currentSwipeIndex) {
                 rowElement.dataset.current = 'true';
@@ -1228,7 +1621,81 @@ async function renderMappingEditor() {
             meta.className = 'mvu-initvar-switcher-mapping-meta';
             meta.textContent = `Effective: ${resolution.presetId} (${resolution.source})${presetIds.has(resolution.presetId) ? '' : ' - preset not found'}; source: ${row.source}.`;
 
-            rowElement.append(label, select, meta);
+            const details = document.createElement('details');
+            details.className = 'mvu-initvar-switcher-preset-editor';
+
+            const summary = document.createElement('summary');
+            summary.textContent = resolvedPreset ? `Edit preset '${resolution.presetId}'` : `Create preset for opening #${row.index}`;
+
+            const editor = document.createElement('div');
+            editor.className = 'mvu-initvar-switcher-preset-editor-body';
+
+            const idLabel = document.createElement('label');
+            idLabel.htmlFor = presetIdInputId;
+            idLabel.textContent = 'Preset id';
+
+            const idInput = document.createElement('input');
+            idInput.id = presetIdInputId;
+            idInput.className = 'text_pole';
+            idInput.type = 'text';
+            idInput.value = savedId || inheritedId || inlineId || String(row.index);
+
+            const textareaLabel = document.createElement('label');
+            textareaLabel.htmlFor = textareaId;
+            textareaLabel.textContent = 'Initvar YAML/JSON';
+
+            const textarea = document.createElement('textarea');
+            textarea.id = textareaId;
+            textarea.className = 'text_pole mvu-initvar-switcher-preset-textarea';
+            textarea.rows = 8;
+            textarea.spellcheck = false;
+            textarea.value = String(resolvedPreset?.content ?? (row.index === currentSwipeIndex ? targetInitvarContent : ''));
+            textarea.placeholder = 'Paste the initvar YAML/JSON for this opening here.';
+
+            const editorActions = document.createElement('div');
+            editorActions.className = 'mvu-initvar-switcher-actions';
+
+            const captureButton = document.createElement('button');
+            captureButton.className = 'menu_button';
+            captureButton.type = 'button';
+            captureButton.textContent = 'Use Current [initvar] Content';
+            captureButton.disabled = !targetInitvarContent;
+            captureButton.addEventListener('click', () => {
+                textarea.value = targetInitvarContent;
+                updateStatus(`Loaded current '${getInitvarEntryComment()}' content into opening #${row.index}.`, 'ok');
+            });
+
+            const saveButton = document.createElement('button');
+            saveButton.className = 'menu_button';
+            saveButton.type = 'button';
+            saveButton.textContent = 'Save Preset Entry';
+            saveButton.addEventListener('click', async () => {
+                try {
+                    await saveOpeningPresetFromControls(row, idInput, textarea, { sync: false });
+                } catch (error) {
+                    logError('Preset save failed', error);
+                    updateStatus(`Preset save failed: ${error.message}`, 'error');
+                }
+            });
+
+            const saveAndSyncButton = document.createElement('button');
+            saveAndSyncButton.className = 'menu_button';
+            saveAndSyncButton.type = 'button';
+            saveAndSyncButton.textContent = 'Save and Sync [initvar]';
+            saveAndSyncButton.addEventListener('click', async () => {
+                try {
+                    await saveOpeningPresetFromControls(row, idInput, textarea, { sync: true });
+                } catch (error) {
+                    logError('Preset save/sync failed', error);
+                    updateStatus(`Preset save/sync failed: ${error.message}`, 'error');
+                }
+            });
+
+            editorActions.append(captureButton, saveButton, saveAndSyncButton);
+            editor.append(idLabel, idInput, textareaLabel, textarea, editorActions);
+            details.append(summary, editor);
+
+            rowElement.append(label, select, meta, details);
             fragment.append(rowElement);
         }
 
@@ -1311,8 +1778,18 @@ function renderSettings(target = getDefaultSettingsTarget()) {
                 </fieldset>
                 <fieldset class="mvu-initvar-switcher-fieldset">
                     <legend>Opening Workbench</legend>
+                    <label for="${MODULE_NAME}_target_world">Target worldbook for saved presets and the synced initvar entry</label>
+                    <input id="${MODULE_NAME}_target_world" class="text_pole" type="text" list="${MODULE_NAME}_worldbook_names" autocomplete="off">
+                    <datalist id="${MODULE_NAME}_worldbook_names"></datalist>
+                    <label class="checkbox_label" for="${MODULE_NAME}_sync_initvar">
+                        <input id="${MODULE_NAME}_sync_initvar" type="checkbox">
+                        Auto-sync the selected preset into one disabled [initvar] entry when applying
+                    </label>
+                    <label for="${MODULE_NAME}_initvar_comment">Synced [initvar] entry name</label>
+                    <input id="${MODULE_NAME}_initvar_comment" class="text_pole" type="text" autocomplete="off">
                     <div class="mvu-initvar-switcher-actions">
                         <button id="${MODULE_NAME}_refresh_map" class="menu_button" type="button">Refresh Openings/Presets</button>
+                        <button id="${MODULE_NAME}_sync_now" class="menu_button" type="button">Sync Current Preset to [initvar]</button>
                         <button id="${MODULE_NAME}_copy_map" class="menu_button" type="button">Copy [MVU_INIT_MAP] JSON</button>
                         <button id="${MODULE_NAME}_clear_map" class="menu_button" type="button">Clear Workbench Map</button>
                     </div>
@@ -1334,6 +1811,9 @@ function renderSettings(target = getDefaultSettingsTarget()) {
     const toasts = document.getElementById(`${MODULE_NAME}_toasts`);
     const mode = document.getElementById(`${MODULE_NAME}_mode`);
     const source = document.getElementById(`${MODULE_NAME}_source`);
+    const targetWorld = document.getElementById(`${MODULE_NAME}_target_world`);
+    const syncInitvar = document.getElementById(`${MODULE_NAME}_sync_initvar`);
+    const initvarComment = document.getElementById(`${MODULE_NAME}_initvar_comment`);
 
     enabled.checked = !!settings.enabled;
     auto.checked = !!settings.autoApplyOnNewChat;
@@ -1341,6 +1821,9 @@ function renderSettings(target = getDefaultSettingsTarget()) {
     toasts.checked = !!settings.showToasts;
     mode.value = settings.applyMode;
     source.value = settings.presetSource;
+    targetWorld.value = getTargetWorldName();
+    syncInitvar.checked = !!settings.syncInitvarEntry;
+    initvarComment.value = getInitvarEntryComment();
 
     enabled.addEventListener('change', () => {
         settings.enabled = enabled.checked;
@@ -1367,6 +1850,24 @@ function renderSettings(target = getDefaultSettingsTarget()) {
         saveSettings();
         void renderMappingEditor();
     });
+    targetWorld.addEventListener('change', () => {
+        setTargetWorldName(targetWorld.value);
+        void renderMappingEditor();
+    });
+    targetWorld.addEventListener('blur', () => {
+        setTargetWorldName(targetWorld.value);
+        targetWorld.value = getTargetWorldName();
+        void renderMappingEditor();
+    });
+    syncInitvar.addEventListener('change', () => {
+        settings.syncInitvarEntry = syncInitvar.checked;
+        saveSettings();
+    });
+    initvarComment.addEventListener('change', () => {
+        setInitvarEntryComment(initvarComment.value);
+        initvarComment.value = getInitvarEntryComment();
+        void renderMappingEditor();
+    });
 
     document.getElementById(`${MODULE_NAME}_scan`)?.addEventListener('click', scanCurrentPreset);
     document.getElementById(`${MODULE_NAME}_apply`)?.addEventListener('click', async () => {
@@ -1378,7 +1879,14 @@ function renderSettings(target = getDefaultSettingsTarget()) {
         }
     });
     document.getElementById(`${MODULE_NAME}_refresh_map`)?.addEventListener('click', () => {
+        setTargetWorldName(targetWorld.value);
+        setInitvarEntryComment(initvarComment.value);
         void renderMappingEditor();
+    });
+    document.getElementById(`${MODULE_NAME}_sync_now`)?.addEventListener('click', () => {
+        setTargetWorldName(targetWorld.value);
+        setInitvarEntryComment(initvarComment.value);
+        void syncCurrentPresetToInitvarEntry();
     });
     document.getElementById(`${MODULE_NAME}_copy_map`)?.addEventListener('click', () => {
         void copyOpeningPresetMap();

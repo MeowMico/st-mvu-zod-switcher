@@ -121,6 +121,32 @@
     grid-column: 1 / -1;
 }
 
+.mvu-initvar-switcher-preset-editor {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+    padding-top: 0.35rem;
+}
+
+.mvu-initvar-switcher-preset-editor summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.mvu-initvar-switcher-preset-editor-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.mvu-initvar-switcher-preset-textarea {
+    width: 100%;
+    min-height: 10rem;
+    resize: vertical;
+    font-family: var(--monoFontFamily, monospace);
+    line-height: 1.35;
+}
+
 .mvu-initvar-switcher-modal {
     position: fixed;
     inset: 0;

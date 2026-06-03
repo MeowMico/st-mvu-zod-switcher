@@ -74,6 +74,8 @@ It also renders a small settings panel in SillyTavern's extension settings area:
 
 Frontend mappings are saved in the Tavern Helper script variables when that API is available. They override `[MVU_INIT_MAP]`, while inline opening markers such as `<!-- mvu-init-preset:church -->` still have the highest priority.
 
+The same panel is also available from the magic wand menu: open the wand menu and choose `MVU InitVar Switcher`.
+
 ## Basic Author Workflow
 
 Create one world info entry for each opening:

@@ -390,15 +390,22 @@ async function renderMappingSummary(presets: PresetEntry[], maps: MapEntry[], wo
   ].filter(Boolean).join('\n');
 }
 
-function renderSettingsPanel(): void {
-  if (document.getElementById(`${MODULE_NAME}_settings`)) {
+function getDefaultSettingsTarget(): Element {
+  return document.querySelector('#extensions_settings2') ?? document.querySelector('#extensions_settings') ?? document.body;
+}
+
+function renderSettingsPanel(target: Element = getDefaultSettingsTarget()): HTMLElement | null {
+  const existing = document.getElementById(`${MODULE_NAME}_settings`);
+  if (existing) {
+    if (existing.parentElement !== target) {
+      target.append(existing);
+    }
     renderSettingsValues();
-    return;
+    return existing;
   }
 
-  const settingsTarget = document.querySelector('#extensions_settings2') ?? document.querySelector('#extensions_settings') ?? document.body;
-  if (!settingsTarget) {
-    return;
+  if (!target) {
+    return null;
   }
 
   const container = document.createElement('div');
@@ -520,7 +527,7 @@ function renderSettingsPanel(): void {
     </div>
   `;
 
-  settingsTarget.append(container);
+  target.append(container);
   renderSettingsValues();
 
   const settings = getSettings();
@@ -579,6 +586,131 @@ function renderSettingsPanel(): void {
   });
 
   void renderMappingEditor();
+  return container;
+}
+
+function closeSettingsDialog(): void {
+  const modal = document.getElementById(`${MODULE_NAME}_modal`);
+  if (modal) {
+    modal.hidden = true;
+  }
+  renderSettingsPanel();
+}
+
+function openSettingsDialog(): void {
+  let modal = document.getElementById(`${MODULE_NAME}_modal`);
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = `${MODULE_NAME}_modal`;
+    modal.className = 'mvu-initvar-switcher-th-modal';
+    modal.innerHTML = `
+      <style>
+        .mvu-initvar-switcher-th-modal {
+          position: fixed;
+          inset: 0;
+          z-index: 99999;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 1rem;
+          background: rgba(0, 0, 0, 0.6);
+        }
+        .mvu-initvar-switcher-th-modal[hidden] {
+          display: none;
+        }
+        .mvu-initvar-switcher-th-dialog {
+          background: var(--SmartThemeBlurTintColor);
+          border: 1px solid var(--SmartThemeBorderColor);
+          border-radius: 8px;
+          box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.35);
+          color: var(--SmartThemeBodyColor);
+          display: flex;
+          flex-direction: column;
+          max-height: min(86vh, 60rem);
+          max-width: min(96vw, 58rem);
+          min-width: min(96vw, 26rem);
+          overflow: hidden;
+        }
+        .mvu-initvar-switcher-th-dialog-header {
+          align-items: center;
+          border-bottom: 1px solid var(--SmartThemeBorderColor);
+          display: flex;
+          gap: 0.5rem;
+          justify-content: space-between;
+          padding: 0.75rem 1rem;
+        }
+        .mvu-initvar-switcher-th-dialog-header h3 {
+          font-size: 1rem;
+          margin: 0;
+        }
+        .mvu-initvar-switcher-th-dialog-body {
+          overflow: auto;
+          padding: 1rem;
+        }
+      </style>
+      <div class="mvu-initvar-switcher-th-dialog" role="dialog" aria-modal="true" aria-labelledby="${MODULE_NAME}_modal_title">
+        <div class="mvu-initvar-switcher-th-dialog-header">
+          <h3 id="${MODULE_NAME}_modal_title">MVU InitVar Switcher</h3>
+          <button id="${MODULE_NAME}_modal_close" class="menu_button" type="button" aria-label="Close MVU InitVar Switcher">Close</button>
+        </div>
+        <div id="${MODULE_NAME}_modal_body" class="mvu-initvar-switcher-th-dialog-body"></div>
+      </div>
+    `;
+
+    document.body.append(modal);
+    modal.addEventListener('click', event => {
+      if (event.target === modal) {
+        closeSettingsDialog();
+      }
+    });
+    document.getElementById(`${MODULE_NAME}_modal_close`)?.addEventListener('click', closeSettingsDialog);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !modal?.hidden) {
+        closeSettingsDialog();
+      }
+    });
+  }
+
+  modal.hidden = false;
+  const body = document.getElementById(`${MODULE_NAME}_modal_body`);
+  if (body) {
+    renderSettingsPanel(body);
+  }
+  document.getElementById(`${MODULE_NAME}_modal_close`)?.focus();
+}
+
+function registerWandMenu(): void {
+  if (document.getElementById(`${MODULE_NAME}_wand_item`)) {
+    return;
+  }
+
+  const menu = document.getElementById('extensionsMenu');
+  if (!menu) {
+    setTimeout(registerWandMenu, 1000);
+    return;
+  }
+
+  const item = document.createElement('div');
+  item.id = `${MODULE_NAME}_wand_item`;
+  item.className = 'list-group-item flex-container flexGap5';
+  item.style.order = '99';
+  item.setAttribute('role', 'button');
+  item.setAttribute('tabindex', '0');
+  item.title = 'Open MVU InitVar Switcher';
+  item.innerHTML = `
+    <div class="fa-solid fa-wand-magic-sparkles extensionsMenuExtensionButton"></div>
+    <span>MVU InitVar Switcher</span>
+  `;
+
+  const activate = () => openSettingsDialog();
+  item.addEventListener('click', activate);
+  item.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      activate();
+    }
+  });
+  menu.append(item);
 }
 
 function logError(message: string, error: unknown): void {
@@ -1058,6 +1190,7 @@ function init(): void {
   hydrateSettingsFromScriptVariables();
   getSettings();
   renderSettingsPanel();
+  registerWandMenu();
   renderScriptInfo();
   registerButtons();
   registerEvents();

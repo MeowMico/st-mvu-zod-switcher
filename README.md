@@ -49,23 +49,23 @@ https://github.com/MeowMico/st-mvu-zod-switcher
 For this workbench version, install tag:
 
 ```text
-v0.2.6
+v0.2.7
 ```
 
 After installation, refresh SillyTavern and open the magic wand menu. Choose `MVU InitVar Switcher`.
 
 ### Extension Opening Workbench
 
-The extension dialog now includes an `Opening Workbench` section for card authors:
+The extension dialog now opens as a full `MVU InitVar Workbench` for card authors:
 
-- `Refresh Openings/Presets` scans the current card openings and the currently discoverable character/chat/global worldbooks.
+- The top toolbar provides `Refresh`, `Scan`, `Apply`, `Sync [initvar]`, and `Copy Map`.
+- The left pane lists every detected opening with its preview, effective preset id, source, and missing/found state.
+- The center pane edits the selected opening's preset id, binding, and initvar YAML/JSON body.
+- The right pane contains switcher config plus the discovered preset pool; clicking a preset assigns it to the selected opening.
 - `Target worldbook` decides where newly saved preset entries and the synced `[initvar]` entry are written.
 - `Synced [initvar] entry name` defaults to `[initvar]变量初始化勿开`.
 - `Auto-sync the selected preset into one disabled [initvar] entry when applying` keeps a single native MVU initvar slot updated as the player changes openings.
-- Each `Opening #N` row shows a preview of that opening and a labeled preset dropdown.
 - Leaving a row blank uses the normal fallback: inline marker, then `[MVU_INIT_MAP]`, then `[MVU_INIT_PRESET:N]`.
-- Choosing a preset in the dropdown saves a per-current-character workbench map in extension settings. That map overrides `[MVU_INIT_MAP]` for that card while you are testing.
-- Expand `Create preset for opening #N` or `Edit preset 'id'` to paste the opening's initvar YAML/JSON directly in the workbench.
 - `Save Preset Entry` creates or updates a disabled `[MVU_INIT_PRESET:id]` entry in the target worldbook.
 - `Save and Sync [initvar]` also copies that content into the single disabled `[initvar]变量初始化勿开` entry.
 - `Sync Current Preset to [initvar]` copies the currently selected opening preset into that same native initvar slot.

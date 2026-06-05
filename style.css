@@ -165,8 +165,9 @@
 .mvu-initvar-switcher-dialog {
     display: flex;
     flex-direction: column;
-    max-height: min(86vh, 60rem);
-    max-width: min(96vw, 54rem);
+    width: min(96vw, 96rem);
+    max-height: min(90vh, 64rem);
+    max-width: 96vw;
     min-width: min(96vw, 24rem);
     overflow: hidden;
     color: var(--SmartThemeBodyColor);
@@ -192,12 +193,243 @@
 
 .mvu-initvar-switcher-dialog-body {
     overflow: auto;
+    padding: 0;
+}
+
+.mvu-initvar-switcher-workbench {
+    display: flex;
+    flex-direction: column;
+    min-height: min(76vh, 52rem);
+    background: var(--SmartThemeBlurTintColor);
+}
+
+.mvu-initvar-switcher-workbench-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.mvu-initvar-switcher-workbench-header h3 {
+    margin: 0 0 0.35rem;
+    font-size: 1.15rem;
+}
+
+.mvu-initvar-switcher-toolbar,
+.mvu-initvar-switcher-editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+
+.mvu-initvar-switcher-overview {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.mvu-initvar-switcher-workbench-grid {
+    display: grid;
+    grid-template-columns: minmax(14rem, 18rem) minmax(26rem, 1fr) minmax(17rem, 22rem);
+    min-height: 0;
+    flex: 1;
+}
+
+.mvu-initvar-switcher-panel {
+    min-width: 0;
+    min-height: 0;
+    border-right: 1px solid var(--SmartThemeBorderColor);
+}
+
+.mvu-initvar-switcher-side-panel {
+    border-right: 0;
+    overflow: auto;
+}
+
+.mvu-initvar-switcher-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.mvu-initvar-switcher-panel-header h4,
+.mvu-initvar-switcher-editor-header h4 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.mvu-initvar-switcher-muted {
+    color: color-mix(in srgb, var(--SmartThemeBodyColor), transparent 38%);
+    font-size: 0.9rem;
+}
+
+.mvu-initvar-switcher-openings,
+.mvu-initvar-switcher-editor,
+.mvu-initvar-switcher-presets {
+    min-height: 0;
+}
+
+.mvu-initvar-switcher-openings {
+    overflow: auto;
+    max-height: calc(min(90vh, 64rem) - 12rem);
+}
+
+.mvu-initvar-switcher-opening-list,
+.mvu-initvar-switcher-preset-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.mvu-initvar-switcher-opening-button,
+.mvu-initvar-switcher-preset-button {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    color: inherit;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    cursor: pointer;
+}
+
+.mvu-initvar-switcher-opening-button:hover,
+.mvu-initvar-switcher-opening-button:focus-visible,
+.mvu-initvar-switcher-preset-button:hover,
+.mvu-initvar-switcher-preset-button:focus-visible {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor), transparent 88%);
+    outline: none;
+}
+
+.mvu-initvar-switcher-opening-button[data-selected='true'],
+.mvu-initvar-switcher-preset-button[data-selected='true'] {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor), transparent 82%);
+    box-shadow: inset 3px 0 0 var(--SmartThemeQuoteColor);
+}
+
+.mvu-initvar-switcher-opening-button[data-current='true'] strong::after {
+    content: ' current';
+    margin-left: 0.25rem;
+    color: #ff9800;
+    font-weight: 600;
+}
+
+.mvu-initvar-switcher-opening-preview,
+.mvu-initvar-switcher-opening-meta,
+.mvu-initvar-switcher-preset-button span {
+    color: color-mix(in srgb, var(--SmartThemeBodyColor), transparent 34%);
+    font-size: 0.9rem;
+}
+
+.mvu-initvar-switcher-opening-preview {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.mvu-initvar-switcher-editor-panel {
+    overflow: auto;
+}
+
+.mvu-initvar-switcher-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
     padding: 1rem;
+}
+
+.mvu-initvar-switcher-editor-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.mvu-initvar-switcher-editor-header p {
+    margin: 0.35rem 0 0;
+    color: color-mix(in srgb, var(--SmartThemeBodyColor), transparent 28%);
+}
+
+.mvu-initvar-switcher-resolution-badge {
+    align-self: flex-start;
+    max-width: 18rem;
+    padding: 0.35rem 0.55rem;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    font-size: 0.86rem;
+}
+
+.mvu-initvar-switcher-editor-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem);
+    gap: 0.75rem;
+}
+
+.mvu-initvar-switcher-form-group,
+.mvu-initvar-switcher-side-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.mvu-initvar-switcher-content-label {
+    font-weight: 700;
+}
+
+.mvu-initvar-switcher-preset-textarea {
+    min-height: 22rem;
+}
+
+.mvu-initvar-switcher-side-section {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.mvu-initvar-switcher-side-section .mvu-initvar-switcher-panel-header {
+    margin: -0.85rem -1rem 0;
+}
+
+.mvu-initvar-switcher-presets {
+    max-height: 18rem;
+    overflow: auto;
 }
 
 @media (max-width: 640px) {
     .mvu-initvar-switcher-dialog {
         max-height: 92vh;
+    }
+
+    .mvu-initvar-switcher-workbench-header,
+    .mvu-initvar-switcher-editor-header {
+        flex-direction: column;
+    }
+
+    .mvu-initvar-switcher-toolbar,
+    .mvu-initvar-switcher-editor-actions {
+        justify-content: flex-start;
+    }
+
+    .mvu-initvar-switcher-workbench-grid,
+    .mvu-initvar-switcher-editor-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .mvu-initvar-switcher-panel {
+        border-right: 0;
+        border-bottom: 1px solid var(--SmartThemeBorderColor);
+    }
+
+    .mvu-initvar-switcher-openings,
+    .mvu-initvar-switcher-presets {
+        max-height: none;
     }
 
     .mvu-initvar-switcher-mapping-row {

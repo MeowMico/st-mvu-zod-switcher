@@ -1251,6 +1251,7 @@ function updateStatus(message, type = 'info') {
 }
 
 let mappingRenderToken = 0;
+let selectedWorkbenchOpeningIndex = null;
 
 function getPresetOptions(presets) {
     const groups = new Map();
@@ -1512,14 +1513,22 @@ async function syncCurrentPresetToInitvarEntry() {
 }
 
 async function renderMappingEditor() {
-    const mapper = document.getElementById(`${MODULE_NAME}_mapper`);
-    if (!mapper) {
+    const openingsPane = document.getElementById(`${MODULE_NAME}_openings`);
+    const editorPane = document.getElementById(`${MODULE_NAME}_editor`);
+    const presetsPane = document.getElementById(`${MODULE_NAME}_presets`);
+    const overview = document.getElementById(`${MODULE_NAME}_overview`);
+    const openingCount = document.getElementById(`${MODULE_NAME}_opening_count`);
+    if (!openingsPane || !editorPane || !presetsPane || !overview) {
         return;
     }
 
     const token = ++mappingRenderToken;
-    mapper.setAttribute('aria-busy', 'true');
-    mapper.textContent = 'Scanning current openings and preset worldbook entries...';
+    openingsPane.setAttribute('aria-busy', 'true');
+    editorPane.setAttribute('aria-busy', 'true');
+    presetsPane.setAttribute('aria-busy', 'true');
+    openingsPane.textContent = 'Scanning openings...';
+    editorPane.textContent = 'Loading editor...';
+    presetsPane.textContent = 'Scanning presets...';
 
     try {
         const rows = getOpeningRows();
@@ -1539,171 +1548,251 @@ async function renderMappingEditor() {
         const presetOptions = getPresetOptions(presets);
         const presetIds = new Set(presetOptions.map(option => option.id));
         const currentSwipeIndex = getCurrentSwipeIndex();
-        const fragment = document.createDocumentFragment();
+        const firstRow = rows[0] ?? null;
+        const currentRow = rows.find(row => row.index === currentSwipeIndex) ?? firstRow;
+        if (!rows.some(row => row.index === selectedWorkbenchOpeningIndex)) {
+            selectedWorkbenchOpeningIndex = currentRow?.index ?? firstRow?.index ?? null;
+        }
+        const selectedRow = rows.find(row => row.index === selectedWorkbenchOpeningIndex) ?? currentRow ?? firstRow;
 
-        mapper.textContent = '';
-        mapper.removeAttribute('aria-busy');
+        openingsPane.textContent = '';
+        editorPane.textContent = '';
+        presetsPane.textContent = '';
+        openingsPane.removeAttribute('aria-busy');
+        editorPane.removeAttribute('aria-busy');
+        presetsPane.removeAttribute('aria-busy');
+        if (openingCount) {
+            openingCount.textContent = `${rows.length}`;
+        }
+
+        renderMappingSummary({ presets, maps, worldNames, rows, worldMapData, storedMap });
 
         if (rows.length === 0) {
             const empty = document.createElement('p');
             empty.className = 'mvu-initvar-switcher-empty';
             empty.textContent = 'No current opening was found for this character/chat.';
-            fragment.append(empty);
+            openingsPane.append(empty);
+            editorPane.append(empty.cloneNode(true));
+            presetsPane.append(empty.cloneNode(true));
+            return;
         }
 
+        const openingList = document.createElement('div');
+        openingList.className = 'mvu-initvar-switcher-opening-list';
         for (const row of rows) {
             const savedId = getMapValue(storedMap, row.index);
             const inheritedId = getMapValue(worldMapData, row.index);
             const inlineId = getPresetIdFromText(row.text);
             const resolution = getOpeningPresetResolutionForRow(row, worldMapData, storedMap);
-            const resolvedPreset = getPresetById(presets, resolution.presetId);
-            const rowElement = document.createElement('div');
-            const selectId = `${MODULE_NAME}_opening_${row.index}`;
-            const presetIdInputId = `${MODULE_NAME}_preset_id_${row.index}`;
-            const textareaId = `${MODULE_NAME}_preset_content_${row.index}`;
-            rowElement.className = 'mvu-initvar-switcher-mapping-row';
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'mvu-initvar-switcher-opening-button';
             if (row.index === currentSwipeIndex) {
-                rowElement.dataset.current = 'true';
+                button.dataset.current = 'true';
             }
+            if (row.index === selectedRow?.index) {
+                button.dataset.selected = 'true';
+            }
+            button.setAttribute('aria-pressed', row.index === selectedRow?.index ? 'true' : 'false');
 
-            const label = document.createElement('label');
-            label.className = 'mvu-initvar-switcher-mapping-label';
-            label.htmlFor = selectId;
-
-            const title = document.createElement('span');
-            title.className = 'mvu-initvar-switcher-mapping-title';
+            const title = document.createElement('strong');
             title.textContent = `Opening #${row.index}${row.index === currentSwipeIndex ? ' (current)' : ''}`;
 
             const preview = document.createElement('span');
-            preview.className = 'mvu-initvar-switcher-mapping-preview';
+            preview.className = 'mvu-initvar-switcher-opening-preview';
             preview.textContent = getOpeningPreview(row.text);
 
-            label.append(title, preview);
+            const meta = document.createElement('span');
+            meta.className = 'mvu-initvar-switcher-opening-meta';
+            meta.textContent = `${resolution.presetId} / ${resolution.source}${presetIds.has(resolution.presetId) ? '' : ' / missing'}`;
 
-            const select = document.createElement('select');
-            select.id = selectId;
-            select.className = 'text_pole mvu-initvar-switcher-mapping-select';
-
-            const defaultOption = document.createElement('option');
-            defaultOption.value = '';
-            defaultOption.textContent = inlineId
-                ? `Use inline marker: ${inlineId}`
-                : inheritedId
-                    ? `Use [MVU_INIT_MAP]: ${inheritedId}`
-                    : `Use default [MVU_INIT_PRESET:${row.index}]`;
-            select.append(defaultOption);
-
-            for (const optionData of presetOptions) {
-                const option = document.createElement('option');
-                option.value = optionData.id;
-                option.textContent = getPresetOptionLabel(optionData);
-                select.append(option);
-            }
-
-            if (savedId && !presetIds.has(savedId)) {
-                const missingOption = document.createElement('option');
-                missingOption.value = savedId;
-                missingOption.textContent = `${savedId} (saved, not found)`;
-                select.append(missingOption);
-            }
-
-            select.value = savedId ?? '';
-            select.addEventListener('change', () => {
-                setStoredOpeningPreset(row.index, select.value);
-                updateStatus(select.value
-                    ? `Opening #${row.index} now maps to preset '${select.value}'.`
-                    : `Opening #${row.index} now uses its inline/worldbook/default mapping.`,
-                'ok');
+            button.append(title, preview, meta);
+            button.addEventListener('click', () => {
+                selectedWorkbenchOpeningIndex = row.index;
                 void renderMappingEditor();
             });
+            openingList.append(button);
+        }
+        openingsPane.append(openingList);
 
-            const meta = document.createElement('div');
-            meta.className = 'mvu-initvar-switcher-mapping-meta';
-            meta.textContent = `Effective: ${resolution.presetId} (${resolution.source})${presetIds.has(resolution.presetId) ? '' : ' - preset not found'}; source: ${row.source}.`;
+        const selectedResolution = getOpeningPresetResolutionForRow(selectedRow, worldMapData, storedMap);
+        const selectedPreset = getPresetById(presets, selectedResolution.presetId);
+        const selectedSavedId = getMapValue(storedMap, selectedRow.index);
+        const selectedInheritedId = getMapValue(worldMapData, selectedRow.index);
+        const selectedInlineId = getPresetIdFromText(selectedRow.text);
+        const selectId = `${MODULE_NAME}_opening_${selectedRow.index}`;
+        const presetIdInputId = `${MODULE_NAME}_preset_id_${selectedRow.index}`;
+        const textareaId = `${MODULE_NAME}_preset_content_${selectedRow.index}`;
 
-            const details = document.createElement('details');
-            details.className = 'mvu-initvar-switcher-preset-editor';
+        const editorHeader = document.createElement('div');
+        editorHeader.className = 'mvu-initvar-switcher-editor-header';
 
-            const summary = document.createElement('summary');
-            summary.textContent = resolvedPreset ? `Edit preset '${resolution.presetId}'` : `Create preset for opening #${row.index}`;
+        const editorTitle = document.createElement('div');
+        const heading = document.createElement('h4');
+        heading.textContent = `Opening #${selectedRow.index}${selectedRow.index === currentSwipeIndex ? ' (current)' : ''}`;
+        const openingPreview = document.createElement('p');
+        openingPreview.textContent = getOpeningPreview(selectedRow.text, 220);
+        editorTitle.append(heading, openingPreview);
 
-            const editor = document.createElement('div');
-            editor.className = 'mvu-initvar-switcher-preset-editor-body';
+        const resolutionBadge = document.createElement('div');
+        resolutionBadge.className = 'mvu-initvar-switcher-resolution-badge';
+        resolutionBadge.textContent = `Effective: ${selectedResolution.presetId} / ${selectedResolution.source}${presetIds.has(selectedResolution.presetId) ? '' : ' / preset not found'}`;
+        editorHeader.append(editorTitle, resolutionBadge);
 
-            const idLabel = document.createElement('label');
-            idLabel.htmlFor = presetIdInputId;
-            idLabel.textContent = 'Preset id';
+        const editorGrid = document.createElement('div');
+        editorGrid.className = 'mvu-initvar-switcher-editor-grid';
 
-            const idInput = document.createElement('input');
-            idInput.id = presetIdInputId;
-            idInput.className = 'text_pole';
-            idInput.type = 'text';
-            idInput.value = savedId || inheritedId || inlineId || String(row.index);
+        const bindingGroup = document.createElement('div');
+        bindingGroup.className = 'mvu-initvar-switcher-form-group';
 
-            const textareaLabel = document.createElement('label');
-            textareaLabel.htmlFor = textareaId;
-            textareaLabel.textContent = 'Initvar YAML/JSON';
+        const selectLabel = document.createElement('label');
+        selectLabel.htmlFor = selectId;
+        selectLabel.textContent = 'Binding';
 
-            const textarea = document.createElement('textarea');
-            textarea.id = textareaId;
-            textarea.className = 'text_pole mvu-initvar-switcher-preset-textarea';
-            textarea.rows = 8;
-            textarea.spellcheck = false;
-            textarea.value = String(resolvedPreset?.content ?? (row.index === currentSwipeIndex ? targetInitvarContent : ''));
-            textarea.placeholder = 'Paste the initvar YAML/JSON for this opening here.';
+        const select = document.createElement('select');
+        select.id = selectId;
+        select.className = 'text_pole';
 
-            const editorActions = document.createElement('div');
-            editorActions.className = 'mvu-initvar-switcher-actions';
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = selectedInlineId
+            ? `Use inline marker: ${selectedInlineId}`
+            : selectedInheritedId
+                ? `Use [MVU_INIT_MAP]: ${selectedInheritedId}`
+                : `Use default [MVU_INIT_PRESET:${selectedRow.index}]`;
+        select.append(defaultOption);
 
-            const captureButton = document.createElement('button');
-            captureButton.className = 'menu_button';
-            captureButton.type = 'button';
-            captureButton.textContent = 'Use Current [initvar] Content';
-            captureButton.disabled = !targetInitvarContent;
-            captureButton.addEventListener('click', () => {
-                textarea.value = targetInitvarContent;
-                updateStatus(`Loaded current '${getInitvarEntryComment()}' content into opening #${row.index}.`, 'ok');
-            });
-
-            const saveButton = document.createElement('button');
-            saveButton.className = 'menu_button';
-            saveButton.type = 'button';
-            saveButton.textContent = 'Save Preset Entry';
-            saveButton.addEventListener('click', async () => {
-                try {
-                    await saveOpeningPresetFromControls(row, idInput, textarea, { sync: false });
-                } catch (error) {
-                    logError('Preset save failed', error);
-                    updateStatus(`Preset save failed: ${error.message}`, 'error');
-                }
-            });
-
-            const saveAndSyncButton = document.createElement('button');
-            saveAndSyncButton.className = 'menu_button';
-            saveAndSyncButton.type = 'button';
-            saveAndSyncButton.textContent = 'Save and Sync [initvar]';
-            saveAndSyncButton.addEventListener('click', async () => {
-                try {
-                    await saveOpeningPresetFromControls(row, idInput, textarea, { sync: true });
-                } catch (error) {
-                    logError('Preset save/sync failed', error);
-                    updateStatus(`Preset save/sync failed: ${error.message}`, 'error');
-                }
-            });
-
-            editorActions.append(captureButton, saveButton, saveAndSyncButton);
-            editor.append(idLabel, idInput, textareaLabel, textarea, editorActions);
-            details.append(summary, editor);
-
-            rowElement.append(label, select, meta, details);
-            fragment.append(rowElement);
+        for (const optionData of presetOptions) {
+            const option = document.createElement('option');
+            option.value = optionData.id;
+            option.textContent = getPresetOptionLabel(optionData);
+            select.append(option);
         }
 
-        mapper.append(fragment);
-        renderMappingSummary({ presets, maps, worldNames, rows, worldMapData, storedMap });
+        if (selectedSavedId && !presetIds.has(selectedSavedId)) {
+            const missingOption = document.createElement('option');
+            missingOption.value = selectedSavedId;
+            missingOption.textContent = `${selectedSavedId} (saved, not found)`;
+            select.append(missingOption);
+        }
+
+        select.value = selectedSavedId ?? '';
+        select.addEventListener('change', () => {
+            setStoredOpeningPreset(selectedRow.index, select.value);
+            updateStatus(select.value
+                ? `Opening #${selectedRow.index} now maps to preset '${select.value}'.`
+                : `Opening #${selectedRow.index} now uses its inline/worldbook/default mapping.`,
+            'ok');
+            void renderMappingEditor();
+        });
+
+        bindingGroup.append(selectLabel, select);
+
+        const idGroup = document.createElement('div');
+        idGroup.className = 'mvu-initvar-switcher-form-group';
+
+        const idLabel = document.createElement('label');
+        idLabel.htmlFor = presetIdInputId;
+        idLabel.textContent = 'Preset id';
+
+        const idInput = document.createElement('input');
+        idInput.id = presetIdInputId;
+        idInput.className = 'text_pole';
+        idInput.type = 'text';
+        idInput.value = selectedSavedId || selectedInheritedId || selectedInlineId || String(selectedRow.index);
+        idGroup.append(idLabel, idInput);
+
+        editorGrid.append(bindingGroup, idGroup);
+
+        const textareaLabel = document.createElement('label');
+        textareaLabel.htmlFor = textareaId;
+        textareaLabel.className = 'mvu-initvar-switcher-content-label';
+        textareaLabel.textContent = 'Initvar YAML/JSON';
+
+        const textarea = document.createElement('textarea');
+        textarea.id = textareaId;
+        textarea.className = 'text_pole mvu-initvar-switcher-preset-textarea';
+        textarea.rows = 14;
+        textarea.spellcheck = false;
+        textarea.value = String(selectedPreset?.content ?? (selectedRow.index === currentSwipeIndex ? targetInitvarContent : ''));
+        textarea.placeholder = 'Paste the initvar YAML/JSON for this opening here.';
+
+        const editorActions = document.createElement('div');
+        editorActions.className = 'mvu-initvar-switcher-editor-actions';
+
+        const captureButton = document.createElement('button');
+        captureButton.className = 'menu_button';
+        captureButton.type = 'button';
+        captureButton.textContent = 'Use Current [initvar] Content';
+        captureButton.disabled = !targetInitvarContent;
+        captureButton.addEventListener('click', () => {
+            textarea.value = targetInitvarContent;
+            updateStatus(`Loaded current '${getInitvarEntryComment()}' content into opening #${selectedRow.index}.`, 'ok');
+        });
+
+        const saveButton = document.createElement('button');
+        saveButton.className = 'menu_button';
+        saveButton.type = 'button';
+        saveButton.textContent = 'Save Preset Entry';
+        saveButton.addEventListener('click', async () => {
+            try {
+                await saveOpeningPresetFromControls(selectedRow, idInput, textarea, { sync: false });
+            } catch (error) {
+                logError('Preset save failed', error);
+                updateStatus(`Preset save failed: ${error.message}`, 'error');
+            }
+        });
+
+        const saveAndSyncButton = document.createElement('button');
+        saveAndSyncButton.className = 'menu_button';
+        saveAndSyncButton.type = 'button';
+        saveAndSyncButton.textContent = 'Save and Sync [initvar]';
+        saveAndSyncButton.addEventListener('click', async () => {
+            try {
+                await saveOpeningPresetFromControls(selectedRow, idInput, textarea, { sync: true });
+            } catch (error) {
+                logError('Preset save/sync failed', error);
+                updateStatus(`Preset save/sync failed: ${error.message}`, 'error');
+            }
+        });
+
+        editorActions.append(saveButton, saveAndSyncButton, captureButton);
+        editorPane.append(editorHeader, editorGrid, textareaLabel, textarea, editorActions);
+
+        const presetList = document.createElement('div');
+        presetList.className = 'mvu-initvar-switcher-preset-list';
+        if (presetOptions.length === 0) {
+            const empty = document.createElement('p');
+            empty.className = 'mvu-initvar-switcher-empty';
+            empty.textContent = 'No [MVU_INIT_PRESET:*] entries found yet. Save the selected opening to create one.';
+            presetList.append(empty);
+        }
+
+        for (const optionData of presetOptions) {
+            const presetButton = document.createElement('button');
+            presetButton.type = 'button';
+            presetButton.className = 'mvu-initvar-switcher-preset-button';
+            presetButton.dataset.selected = optionData.id === selectedResolution.presetId ? 'true' : 'false';
+            const presetName = document.createElement('strong');
+            presetName.textContent = optionData.id;
+            const presetSource = document.createElement('span');
+            presetSource.textContent = [...optionData.worldNames].join(', ') || 'unknown worldbook';
+            presetButton.append(presetName, presetSource);
+            presetButton.addEventListener('click', () => {
+                setStoredOpeningPreset(selectedRow.index, optionData.id);
+                updateStatus(`Opening #${selectedRow.index} now maps to preset '${optionData.id}'.`, 'ok');
+                void renderMappingEditor();
+            });
+            presetList.append(presetButton);
+        }
+        presetsPane.append(presetList);
     } catch (error) {
-        mapper.removeAttribute('aria-busy');
-        mapper.textContent = `Workbench scan failed: ${error.message}`;
+        openingsPane.removeAttribute('aria-busy');
+        editorPane.removeAttribute('aria-busy');
+        presetsPane.removeAttribute('aria-busy');
+        openingsPane.textContent = `Workbench scan failed: ${error.message}`;
+        editorPane.textContent = '';
+        presetsPane.textContent = '';
         const summary = document.getElementById(`${MODULE_NAME}_mapper_summary`);
         if (summary) {
             summary.textContent = '';
@@ -1737,68 +1826,88 @@ function renderSettings(target = getDefaultSettingsTarget()) {
     container.id = `${MODULE_NAME}_settings`;
     container.className = 'mvu-initvar-switcher-settings';
     container.innerHTML = `
-        <div class="inline-drawer">
-            <div class="inline-drawer-toggle inline-drawer-header">
-                <b>MVU InitVar Switcher</b>
-                <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-            </div>
-            <div class="inline-drawer-content">
-                <fieldset class="mvu-initvar-switcher-fieldset">
-                    <legend>Switcher</legend>
-                    <label class="checkbox_label" for="${MODULE_NAME}_enabled">
-                        <input id="${MODULE_NAME}_enabled" type="checkbox">
-                        Enable switcher
-                    </label>
-                    <label class="checkbox_label" for="${MODULE_NAME}_auto">
-                        <input id="${MODULE_NAME}_auto" type="checkbox">
-                        Auto-apply on new chat / opening swipe
-                    </label>
-                    <label class="checkbox_label" for="${MODULE_NAME}_after_started">
-                        <input id="${MODULE_NAME}_after_started" type="checkbox">
-                        Allow auto overwrite after chat has started
-                    </label>
-                    <label class="checkbox_label" for="${MODULE_NAME}_toasts">
-                        <input id="${MODULE_NAME}_toasts" type="checkbox">
-                        Show toast notifications
-                    </label>
-                    <label for="${MODULE_NAME}_mode">Apply mode</label>
-                    <select id="${MODULE_NAME}_mode" class="text_pole">
-                        <option value="replace">Replace stat_data with preset</option>
-                        <option value="merge">Merge preset into current stat_data</option>
-                    </select>
-                    <label for="${MODULE_NAME}_source">Preset search scope</label>
-                    <select id="${MODULE_NAME}_source" class="text_pole">
-                        <option value="active">Active character/chat/global books</option>
-                        <option value="all">All loaded world info books</option>
-                    </select>
-                    <div class="mvu-initvar-switcher-actions">
-                        <button id="${MODULE_NAME}_scan" class="menu_button" type="button">Scan Current Preset</button>
-                        <button id="${MODULE_NAME}_apply" class="menu_button" type="button">Apply Current Preset</button>
+        <div class="mvu-initvar-switcher-workbench">
+            <div class="mvu-initvar-switcher-workbench-header">
+                <div>
+                    <h3>MVU InitVar Workbench</h3>
+                    <div id="${MODULE_NAME}_status" class="mvu-initvar-switcher-status" data-type="info" role="status" aria-live="polite">
+                        Ready. Current opening defaults to [MVU_INIT_PRESET:swipeIndex].
                     </div>
-                </fieldset>
-                <fieldset class="mvu-initvar-switcher-fieldset">
-                    <legend>Opening Workbench</legend>
-                    <label for="${MODULE_NAME}_target_world">Target worldbook for saved presets and the synced initvar entry</label>
-                    <input id="${MODULE_NAME}_target_world" class="text_pole" type="text" list="${MODULE_NAME}_worldbook_names" autocomplete="off">
-                    <datalist id="${MODULE_NAME}_worldbook_names"></datalist>
-                    <label class="checkbox_label" for="${MODULE_NAME}_sync_initvar">
-                        <input id="${MODULE_NAME}_sync_initvar" type="checkbox">
-                        Auto-sync the selected preset into one disabled [initvar] entry when applying
-                    </label>
-                    <label for="${MODULE_NAME}_initvar_comment">Synced [initvar] entry name</label>
-                    <input id="${MODULE_NAME}_initvar_comment" class="text_pole" type="text" autocomplete="off">
-                    <div class="mvu-initvar-switcher-actions">
-                        <button id="${MODULE_NAME}_refresh_map" class="menu_button" type="button">Refresh Openings/Presets</button>
-                        <button id="${MODULE_NAME}_sync_now" class="menu_button" type="button">Sync Current Preset to [initvar]</button>
-                        <button id="${MODULE_NAME}_copy_map" class="menu_button" type="button">Copy [MVU_INIT_MAP] JSON</button>
-                        <button id="${MODULE_NAME}_clear_map" class="menu_button" type="button">Clear Workbench Map</button>
-                    </div>
-                    <div id="${MODULE_NAME}_mapper_summary" class="mvu-initvar-switcher-summary" role="status" aria-live="polite"></div>
-                    <div id="${MODULE_NAME}_mapper" class="mvu-initvar-switcher-mapper" role="region" aria-label="Opening to initvar preset mapping" aria-live="polite"></div>
-                </fieldset>
-                <div id="${MODULE_NAME}_status" class="mvu-initvar-switcher-status" data-type="info">
-                    Ready. Current opening defaults to [MVU_INIT_PRESET:swipeIndex].
                 </div>
+                <div class="mvu-initvar-switcher-toolbar" aria-label="Workbench actions">
+                    <button id="${MODULE_NAME}_refresh_map" class="menu_button" type="button">Refresh</button>
+                    <button id="${MODULE_NAME}_scan" class="menu_button" type="button">Scan</button>
+                    <button id="${MODULE_NAME}_apply" class="menu_button" type="button">Apply</button>
+                    <button id="${MODULE_NAME}_sync_now" class="menu_button" type="button">Sync [initvar]</button>
+                    <button id="${MODULE_NAME}_copy_map" class="menu_button" type="button">Copy Map</button>
+                </div>
+            </div>
+            <div id="${MODULE_NAME}_overview" class="mvu-initvar-switcher-overview">
+                <div id="${MODULE_NAME}_mapper_summary" class="mvu-initvar-switcher-summary" role="status" aria-live="polite"></div>
+            </div>
+            <div class="mvu-initvar-switcher-workbench-grid">
+                <section class="mvu-initvar-switcher-panel mvu-initvar-switcher-openings-panel" aria-labelledby="${MODULE_NAME}_openings_title">
+                    <div class="mvu-initvar-switcher-panel-header">
+                        <h4 id="${MODULE_NAME}_openings_title">Openings</h4>
+                        <span id="${MODULE_NAME}_opening_count" class="mvu-initvar-switcher-muted"></span>
+                    </div>
+                    <div id="${MODULE_NAME}_openings" class="mvu-initvar-switcher-openings" role="list" aria-live="polite"></div>
+                </section>
+                <section class="mvu-initvar-switcher-panel mvu-initvar-switcher-editor-panel" aria-labelledby="${MODULE_NAME}_editor_title">
+                    <div class="mvu-initvar-switcher-panel-header">
+                        <h4 id="${MODULE_NAME}_editor_title">Preset Editor</h4>
+                    </div>
+                    <div id="${MODULE_NAME}_editor" class="mvu-initvar-switcher-editor" aria-live="polite"></div>
+                </section>
+                <aside class="mvu-initvar-switcher-panel mvu-initvar-switcher-side-panel">
+                    <section class="mvu-initvar-switcher-side-section" aria-labelledby="${MODULE_NAME}_config_title">
+                        <div class="mvu-initvar-switcher-panel-header">
+                            <h4 id="${MODULE_NAME}_config_title">Config</h4>
+                        </div>
+                        <label class="checkbox_label" for="${MODULE_NAME}_enabled">
+                            <input id="${MODULE_NAME}_enabled" type="checkbox">
+                            Enable switcher
+                        </label>
+                        <label class="checkbox_label" for="${MODULE_NAME}_auto">
+                            <input id="${MODULE_NAME}_auto" type="checkbox">
+                            Auto-apply on new chat / opening swipe
+                        </label>
+                        <label class="checkbox_label" for="${MODULE_NAME}_after_started">
+                            <input id="${MODULE_NAME}_after_started" type="checkbox">
+                            Allow auto overwrite after chat has started
+                        </label>
+                        <label class="checkbox_label" for="${MODULE_NAME}_sync_initvar">
+                            <input id="${MODULE_NAME}_sync_initvar" type="checkbox">
+                            Auto-sync selected preset into [initvar]
+                        </label>
+                        <label class="checkbox_label" for="${MODULE_NAME}_toasts">
+                            <input id="${MODULE_NAME}_toasts" type="checkbox">
+                            Show toast notifications
+                        </label>
+                        <label for="${MODULE_NAME}_target_world">Target worldbook</label>
+                        <input id="${MODULE_NAME}_target_world" class="text_pole" type="text" list="${MODULE_NAME}_worldbook_names" autocomplete="off">
+                        <datalist id="${MODULE_NAME}_worldbook_names"></datalist>
+                        <label for="${MODULE_NAME}_initvar_comment">Synced [initvar] entry name</label>
+                        <input id="${MODULE_NAME}_initvar_comment" class="text_pole" type="text" autocomplete="off">
+                        <label for="${MODULE_NAME}_mode">Apply mode</label>
+                        <select id="${MODULE_NAME}_mode" class="text_pole">
+                            <option value="replace">Replace stat_data with preset</option>
+                            <option value="merge">Merge preset into current stat_data</option>
+                        </select>
+                        <label for="${MODULE_NAME}_source">Preset search scope</label>
+                        <select id="${MODULE_NAME}_source" class="text_pole">
+                            <option value="active">Active character/chat/global books</option>
+                            <option value="all">All loaded world info books</option>
+                        </select>
+                        <button id="${MODULE_NAME}_clear_map" class="menu_button" type="button">Clear Workbench Map</button>
+                    </section>
+                    <section class="mvu-initvar-switcher-side-section" aria-labelledby="${MODULE_NAME}_presets_title">
+                        <div class="mvu-initvar-switcher-panel-header">
+                            <h4 id="${MODULE_NAME}_presets_title">Preset Pool</h4>
+                        </div>
+                        <div id="${MODULE_NAME}_presets" class="mvu-initvar-switcher-presets" aria-live="polite"></div>
+                    </section>
+                </aside>
             </div>
         </div>
     `;
